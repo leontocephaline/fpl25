@@ -1,0 +1,37 @@
+pandas
+numpy
+scikit-learn
+xgboost
+lightgbm
+scipy
+joblib
+reportlab
+seaborn
+matplotlib
+PyYAML
+requests
+pulp
+boruta
+tqdm
+sqlite-utils
+
+# Optional acceleration/inference (used when ml.inference_backend = onnx)
+onnx
+skl2onnx
+onnxmltools
+onnxruntime-directml
+
+# Optional model explainability
+shap
+
+# Updater dependencies
+pydantic>=2
+pydantic-settings>=2
+tenacity>=8
+python-dotenv>=1
+
+# FPL auth and secure storage
+fpl
+keyring
+aiohttp
+selenium>=4.20

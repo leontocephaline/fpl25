@@ -1,0 +1,198 @@
+# config.yaml - Configuration file
+# FPL Optimizer Configuration
+# Main system settings and parameters
+
+system:
+  log_level: WARNING
+  optimization_horizon: 4  # Default gameweeks to optimize for
+  model_save_path: ./data/models/
+  data_cache_path: ./data/processed/
+  
+# Explicitly set current FPL gameweek for prediction archival and reporting
+current_gameweek: 4
+  
+# FPL API Configuration
+api:
+  base_url: "https://fantasy.premierleague.com/api"
+  rate_limit_delay: 1.0  # Seconds between requests
+  timeout: 30  # Request timeout in seconds
+  retry_attempts: 3
+  
+# Machine Learning Configuration
+ml:
+  model_type: xgboost  # ensemble, xgboost, lightgbm
+  cross_validation_folds: 3
+  test_size: 0.2
+  random_state: 42
+  # Inference backend: 'cpu' (default) or 'onnx'
+  inference_backend: onnx
+  # Explainability
+  enable_shap: false
+  # XGBoost training diagnostics
+  xgb_early_stopping_rounds: 50
+  xgb_verbose_eval: false
+  # Decision Tree diagnostic baseline
+  enable_dtree_diagnostics: true
+  dtree_max_depth: 3  # For interpretability
+
+  # --- ML Diagnostics --- #
+  save_feature_importance: true # Save feature importance to a file after training
+  enable_prediction_archival: true # Save predictions for backtesting
+  enable_extended_diagnostics: true # Generate per-GW/position diagnostics
+  enable_residual_analysis: true # Perform residual analysis by minutes played
+  # XGBoost parameters - Tuned for FPL prediction
+  xgboost:
+    n_estimators: 800
+    max_depth: 5
+    learning_rate: 0.07
+    subsample: 0.85
+    colsample_bytree: 0.8
+    min_child_weight: 3
+    reg_alpha: 0.2
+    reg_lambda: 3
+    random_state: 42
+    objective: "reg:squarederror"
+    verbosity: 0
+    
+  # LightGBM parameters
+  lightgbm:
+    n_estimators: 100
+    max_depth: 6
+    learning_rate: 0.1
+    subsample: 0.8
+    colsample_bytree: 0.8
+    verbose: -1  # Suppress warnings
+    min_child_samples: 5  # Reduce overfitting warnings
+    
+# Optimization Configuration
+optimization:
+  solver: PULP_CBC_CMD  # Options: PULP_CBC_CMD, CVXPY
+  time_limit: 300      # Seconds
+  gap_tolerance: 0.01
+
+  # Core FPL Rules (should generally not be changed)
+  budget: 100.0          # Million pounds
+  squad_size: 15
+  starting_xi_size: 11
+  max_per_team: 3
+
+  # Squad position constraints
+  positions:
+    GK:
+      squad_count: 2
+      starting_count: 1
+    DEF:
+      squad_count: 5
+      starting_min: 3
+      starting_max: 5
+    MID:
+      squad_count: 5
+      starting_min: 2 # Official FPL rule is min 2, not 3
+      starting_max: 5
+    FWD:
+      squad_count: 3
+      starting_min: 1
+      starting_max: 3
+
+  # --- Strategic Levers ---
+
+  # Formation preferences with weights to influence selection
+  formations:
+    "3-5-2": {weight: 1.0, priority: 1}
+    "3-4-3": {weight: 0.8, priority: 2}
+    "4-5-1": {weight: 0.7, priority: 3}
+    "4-4-2": {weight: 0.6, priority: 4}
+
+  # Bench player weights for optimization objective function
+  # Order: GK, Sub1, Sub2, Sub3 (position 12, 13, 14, 15)
+  bench_weights: [0.03, 0.2, 0.1, 0.05]
+  
+# Strategy Configuration
+strategy:
+  premium_limit: 2  # Maximum premium players (MID/FWD ≥£8.0m)
+  
+  # Premium thresholds by position
+  premium_thresholds:
+    GK: 5.5
+    DEF: 6.0
+    MID: 8.0
+    FWD: 8.0
+    
+  # Transfer strategy
+  transfer:
+    hit_threshold: 2.0  # Minimum xPts improvement to take -4 hit
+    price_rise_threshold: 0.1  # Take transfer if player likely to rise
+    
+  # Captain selection weights
+  captaincy:
+    predicted_points: 0.40
+    fixture_difficulty: 0.25
+    form: 0.20
+    reliability: 0.15
+    
+  # Risk management
+  risk:
+    ownership_differential_threshold: 15  # <15% = differential
+    rotation_risk_minutes_threshold: 60   # <60 min/game = rotation risk
+    max_template_players: 8  # Warning threshold
+    
+# Feature Engineering Configuration
+features:
+  # Rolling window sizes for form metrics
+  rolling_windows: [3, 5, 10]
+  
+  # Fixture difficulty weights
+  fixture_weights:
+    very_easy: 1.3
+    easy: 1.1
+    neutral: 1.0
+    hard: 0.9
+    very_hard: 0.7
+    
+  # Minutes prediction parameters
+  minutes:
+    nailed_threshold: 70  # Minutes per game for "nailed" status
+    rotation_risk_threshold: 45
+    
+# Web Application Configuration (Future)
+web:
+  host: "0.0.0.0"
+  port: 5000
+  debug: false
+  secret_key: "your-secret-key-here"  # Change in production
+  
+# Optional: SHAP settings for model explainability
+shap:
+  enable: true
+  sample_size: 1000  # Number of samples for SHAP summary plot
+
+# Feature Engineering Switches
+feature_engineering:
+  enable_lagged_features: true
+  enable_fixture_trends: true
+  enable_team_rolling_features: true
+
+# Logging configuration
+logging:
+  version: 1
+  formatters:
+    default:
+      format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  handlers:
+    console:
+      class: logging.StreamHandler
+      level: INFO
+      formatter: default
+    file:
+      class: logging.FileHandler
+      filename: logs/fpl_optimizer.log
+      level: DEBUG
+      formatter: default
+  loggers:
+    fpl_optimizer:
+      level: DEBUG
+      handlers: [console, file]
+      propagate: false
+  root:
+    level: INFO
+    handlers: [console]

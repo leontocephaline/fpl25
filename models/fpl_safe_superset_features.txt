@@ -1,0 +1,8 @@
+creativity
+ict_index
+influence
+threat
+transfers_balance
+transfers_in
+transfers_out
+value

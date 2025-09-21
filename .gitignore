@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+.packaging-venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Env/secrets
+!.env.example
+.env
+.env.*
+*.key
+*.pem
+
+# Logs and caches
+*.log
+logs/
+.cache/
+.perplexity_cache/
+.fpl_news_cache/
+.pytest_cache/
+
+# Build artifacts
+build/
+dist/
+out/
+*.spec
+
+# Data/output
+reports/
+plots/
+data/
+*.pdf
+player_news.json
+
+# Local config overrides
+config.debug.yaml

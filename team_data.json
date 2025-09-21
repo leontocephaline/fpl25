@@ -1,0 +1,209 @@
+{
+  "chips": [
+    {
+      "chip_type": "team",
+      "id": 4,
+      "is_pending": false,
+      "name": "bboost",
+      "number": 1,
+      "played_by_entry": [],
+      "start_event": 1,
+      "status_for_entry": "available",
+      "stop_event": 19
+    },
+    {
+      "chip_type": "team",
+      "id": 5,
+      "is_pending": false,
+      "name": "3xc",
+      "number": 1,
+      "played_by_entry": [],
+      "start_event": 1,
+      "status_for_entry": "available",
+      "stop_event": 19
+    },
+    {
+      "chip_type": "transfer",
+      "id": 1,
+      "is_pending": false,
+      "name": "wildcard",
+      "number": 1,
+      "played_by_entry": [],
+      "start_event": 2,
+      "status_for_entry": "available",
+      "stop_event": 19
+    },
+    {
+      "chip_type": "transfer",
+      "id": 3,
+      "is_pending": false,
+      "name": "freehit",
+      "number": 1,
+      "played_by_entry": [],
+      "start_event": 2,
+      "status_for_entry": "available",
+      "stop_event": 19
+    }
+  ],
+  "picks": [
+    {
+      "element": 502,
+      "element_type": 1,
+      "is_captain": false,
+      "is_vice_captain": true,
+      "multiplier": 1,
+      "position": 1,
+      "purchase_price": 50,
+      "selling_price": 50
+    },
+    {
+      "element": 256,
+      "element_type": 2,
+      "is_captain": false,
+      "is_vice_captain": false,
+      "multiplier": 1,
+      "position": 2,
+      "purchase_price": 55,
+      "selling_price": 55
+    },
+    {
+      "element": 610,
+      "element_type": 2,
+      "is_captain": false,
+      "is_vice_captain": false,
+      "multiplier": 1,
+      "position": 3,
+      "purchase_price": 45,
+      "selling_price": 45
+    },
+    {
+      "element": 260,
+      "element_type": 2,
+      "is_captain": false,
+      "is_vice_captain": false,
+      "multiplier": 1,
+      "position": 4,
+      "purchase_price": 45,
+      "selling_price": 45
+    },
+    {
+      "element": 106,
+      "element_type": 2,
+      "is_captain": false,
+      "is_vice_captain": false,
+      "multiplier": 1,
+      "position": 5,
+      "purchase_price": 50,
+      "selling_price": 50
+    },
+    {
+      "element": 119,
+      "element_type": 3,
+      "is_captain": false,
+      "is_vice_captain": false,
+      "multiplier": 1,
+      "position": 6,
+      "purchase_price": 80,
+      "selling_price": 80
+    },
+    {
+      "element": 489,
+      "element_type": 3,
+      "is_captain": false,
+      "is_vice_captain": false,
+      "multiplier": 1,
+      "position": 7,
+      "purchase_price": 65,
+      "selling_price": 64
+    },
+    {
+      "element": 82,
+      "element_type": 3,
+      "is_captain": false,
+      "is_vice_captain": false,
+      "multiplier": 1,
+      "position": 8,
+      "purchase_price": 70,
+      "selling_price": 71
+    },
+    {
+      "element": 324,
+      "element_type": 3,
+      "is_captain": false,
+      "is_vice_captain": false,
+      "multiplier": 1,
+      "position": 9,
+      "purchase_price": 65,
+      "selling_price": 65
+    },
+    {
+      "element": 525,
+      "element_type": 4,
+      "is_captain": true,
+      "is_vice_captain": false,
+      "multiplier": 2,
+      "position": 10,
+      "purchase_price": 75,
+      "selling_price": 75
+    },
+    {
+      "element": 654,
+      "element_type": 4,
+      "is_captain": false,
+      "is_vice_captain": false,
+      "multiplier": 1,
+      "position": 11,
+      "purchase_price": 65,
+      "selling_price": 65
+    },
+    {
+      "element": 253,
+      "element_type": 1,
+      "is_captain": false,
+      "is_vice_captain": false,
+      "multiplier": 0,
+      "position": 12,
+      "purchase_price": 50,
+      "selling_price": 50
+    },
+    {
+      "element": 506,
+      "element_type": 2,
+      "is_captain": false,
+      "is_vice_captain": false,
+      "multiplier": 0,
+      "position": 13,
+      "purchase_price": 55,
+      "selling_price": 55
+    },
+    {
+      "element": 381,
+      "element_type": 3,
+      "is_captain": false,
+      "is_vice_captain": false,
+      "multiplier": 0,
+      "position": 14,
+      "purchase_price": 145,
+      "selling_price": 145
+    },
+    {
+      "element": 337,
+      "element_type": 4,
+      "is_captain": false,
+      "is_vice_captain": false,
+      "multiplier": 0,
+      "position": 15,
+      "purchase_price": 65,
+      "selling_price": 65
+    }
+  ],
+  "picks_last_updated": "2025-08-14T18:53:59.546552Z",
+  "transfers": {
+    "bank": 20,
+    "cost": 4,
+    "limit": 2,
+    "made": 0,
+    "status": "cost",
+    "value": 982
+  }
+}

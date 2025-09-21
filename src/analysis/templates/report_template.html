@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>FPL Model Analysis Report</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        h1, h2, h3 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 5px;
+        }
+        .page-break { page-break-after: always; }
+        .section {
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background-color: #3498db;
+            color: white;
+        }
+        tr:nth-child(even) { background-color: #ecf0f1; }
+        img {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>FPL Model Analysis Report</h1>
+    <p>Generated on: {{ generation_date }}</p>
+
+    <div class="page-break"></div>
+
+    <h2>Data Cleaning Report</h2>
+    <div class="section">
+        <h3>Clipped Value Statistics</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Feature</th>
+                    <th>Clipped Values</th>
+                    <th>Total Values</th>
+                    <th>% Clipped</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for feature, stats in cleaned_stats.items() %}
+                <tr>
+                    <td>{{ feature }}</td>
+                    <td>{{ stats.clipped_count }}</td>
+                    <td>{{ stats.total_count }}</td>
+                    <td>{{ "%.2f"|format((stats.clipped_count / stats.total_count) * 100) }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="page-break"></div>
+
+    <h2>Feature Analysis</h2>
+    {% for feature in features %}
+    <div class="section">
+        <h3>{{ feature.name }}</h3>
+        <p><strong>Source:</strong> {{ feature.source }}</p>
+        <p><strong>Transformation:</strong> {{ feature.transformation }}</p>
+        <p><strong>Code Reference:</strong> {{ feature.code_ref }}</p>
+        <h4>Statistics</h4>
+        {{ feature.stats_table|safe }}
+        <h4>Distribution</h4>
+        <img src="{{ feature.plot_path }}" alt="Distribution for {{ feature.name }}">
+    </div>
+    {% if not loop.last %}<div class="page-break"></div>{% endif %}
+    {% endfor %}
+
+    <div class="page-break"></div>
+
+    <h2>Boruta Feature Importance</h2>
+    <div class="section">
+        <h3>Feature Importance Ranking</h3>
+        <p>Boruta analysis helps identify all features that are statistically relevant to the outcome.</p>
+        <img src="{{ boruta_plot_path }}" alt="Boruta Feature Importance">
+    </div>
+
+    <div class="page-break"></div>
+
+    <h2>Model Diagnostics</h2>
+    {% for model in models %}
+    <div class="section">
+        <h3>{{ model.name }}</h3>
+        <h4>Performance Metrics</h4>
+        {{ model.metrics_table|safe }}
+        <h4>Convergence Curve</h4>
+        <img src="{{ model.convergence_plot_path }}" alt="Convergence for {{ model.name }}">
+        <h4>Residuals Plot</h4>
+        <img src="{{ model.residuals_plot_path }}" alt="Residuals for {{ model.name }}">
+        {% if model.shap_plot_path %}
+        <h4>SHAP Summary Plot</h4>
+        <img src="{{ model.shap_plot_path }}" alt="SHAP Summary for {{ model.name }}">
+        {% endif %}
+    </div>
+    {% if not loop.last %}<div class="page-break"></div>{% endif %}
+    {% endfor %}
+
+</body>
+</html>
