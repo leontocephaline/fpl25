@@ -9,7 +9,7 @@ from typing import Optional
 import importlib.util
 
 # Import pipelines and helpers
-from fpl_weekly_updater.main import run_weekly_update
+# NOTE: Avoid importing heavy modules at import time; keep appendix lightweight.
 
 def _load_backtest_main() -> Optional[callable]:
     """Dynamically load the backtest script's main() function by file path.
@@ -25,6 +25,12 @@ def _load_backtest_main() -> Optional[callable]:
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
         candidates.append(Path(meipass) / "scripts" / "run_backtest_analysis.py")
+    # PyInstaller one-dir: data files live next to the executable
+    try:
+        exe_dir = Path(sys.executable).parent
+        candidates.append(exe_dir / "scripts" / "run_backtest_analysis.py")
+    except Exception:
+        pass
     
     for path in candidates:
         try:
@@ -70,6 +76,10 @@ def _add_common_verbosity_flags(p: argparse.ArgumentParser) -> None:
 
 def _cmd_weekly(args: argparse.Namespace) -> int:
     _apply_log_level(args)
+    # Lazy import to avoid pulling ML/xgboost when not needed
+    from fpl_weekly_updater.main import run_weekly_update  # type: ignore
+    # Lazy load settings only for weekly path
+    from fpl_weekly_updater.config.settings import load_settings  # type: ignore
     kwargs: dict = {}
     if args.gameweek:
         kwargs["generate_predictions_for_gw"] = args.gameweek
@@ -77,14 +87,13 @@ def _cmd_weekly(args: argparse.Namespace) -> int:
         kwargs["skip_news"] = True
     if args.report_dir:
         kwargs["report_dir"] = Path(args.report_dir)
+    if args.appendix:
+        kwargs["appendix"] = True
 
     path = run_weekly_update(**kwargs)
     if path is None:
         print("Weekly update failed.")
         return 1
-    if args.appendix:
-        # Placeholder for appendix generation hook (future expansion)
-        logging.getLogger(__name__).info("Appendix generation requested (not yet implemented).")
     return 0
 
 
@@ -135,10 +144,54 @@ def build_parser() -> argparse.ArgumentParser:
     p_weekly.add_argument("--no-news", action="store_true", help="Skip Perplexity/news analysis")
     p_weekly.set_defaults(func=_cmd_weekly)
 
-    # appendix (placeholder)
-    p_appendix = sub.add_parser("appendix", help="Generate the appendix-only report (placeholder)")
+    # appendix (redefined): Generate the ML Pipeline Report by wrapping backtest analysis
+    p_appendix = sub.add_parser("appendix", help="Generate the ML Pipeline (backtest) report PDF")
     _add_common_verbosity_flags(p_appendix)
-    p_appendix.set_defaults(func=lambda a: (print("Appendix generation not yet implemented."), 0)[1])
+    p_appendix.add_argument("--actual-data", type=str, help="Path to CSV with actual FPL results (defaults to data/actuals_2024-25.csv if present)")
+    p_appendix.add_argument("--output-dir", type=str, help="Directory to save report (default: reports)")
+    p_appendix.add_argument("--predictions-dir", type=str, help="Directory containing archived predictions (default: data/backtest)")
+    def _cmd_appendix(args: argparse.Namespace) -> int:
+        # Force clean console output by default for appendix runs
+        logging.getLogger().setLevel(logging.ERROR)
+        # Determine actuals path
+        actual_path = args.actual_data
+        default_actual = Path("data/actuals_2024-25.csv")
+        if not actual_path:
+            if default_actual.exists():
+                actual_path = str(default_actual)
+        if not actual_path:
+            print("Appendix requires --actual-data or a default 'data/actuals_2024-25.csv' present.")
+            return 2
+        # Try the full backtest analysis script first
+        try:
+            backtest_main = _load_backtest_main()
+            if backtest_main is not None:
+                cli = ["--actual-data", actual_path, "--generate-report"]
+                if args.output_dir:
+                    cli += ["--output-dir", args.output_dir]
+                if args.predictions_dir:
+                    cli += ["--predictions-dir", args.predictions_dir]
+                # Use defaults for season/predictions-dir; users can use 'backtest' for advanced control
+                sys.argv = ["fpl appendix"] + cli
+                return int(backtest_main())
+        except Exception as e:
+            # Fall through to lite
+            pass
+        # Fallback: Lightweight backtest that only depends on pandas/numpy/matplotlib
+        try:
+            from fpl_weekly_updater.analysis.backtest_lite import run_backtest_lite  # type: ignore
+            out_dir = Path(args.output_dir) if args.output_dir else Path("reports")
+            pred_dir = Path(args.predictions_dir) if args.predictions_dir else Path("data/backtest")
+            res = run_backtest_lite(Path(actual_path), pred_dir, out_dir)
+            if res.pdf_path or res.md_path:
+                print("Backtest (lite) completed.")
+                return 0
+            print("Backtest (lite) did not produce output.")
+            return 1
+        except Exception as e:
+            print(f"Backtest tooling not available: {e}")
+            return 1
+    p_appendix.set_defaults(func=_cmd_appendix)
 
     # backtest (wrap existing script)
     p_back = sub.add_parser("backtest", help="Run historical backtest analysis and optional report")
@@ -152,15 +205,57 @@ def build_parser() -> argparse.ArgumentParser:
     p_back.add_argument("--filter-nonplaying", action="store_true", default=False, help="Exclude non-playing rows from actuals")
     p_back.set_defaults(func=_cmd_backtest)
 
-    # init-team (placeholder)
-    p_init = sub.add_parser("init-team", help="Build an initial squad within constraints (placeholder)")
+    # init-team (implemented baseline)
+    p_init = sub.add_parser("init-team", help="Build an initial 15-player squad within constraints")
     _add_common_verbosity_flags(p_init)
-    p_init.add_argument("--budget", type=float, default=100.0, help="Budget in millions")
-    p_init.add_argument("--formation", type=str, default="3-5-2", help="Formation (e.g., 3-5-2)")
-    p_init.add_argument("--lock", type=str, default="", help="Comma-separated players to lock")
-    p_init.add_argument("--exclude", type=str, default="", help="Comma-separated players to exclude")
-    p_init.add_argument("--max-from-team", type=int, default=3, help="Max players per Premier League team")
-    p_init.set_defaults(func=lambda a: (print("Initial team selector not yet implemented."), 0)[1])
+    p_init.add_argument("--budget", type=float, default=100.0, help="Budget in millions (default: 100.0)")
+    p_init.add_argument("--formation", type=str, default="3-5-2", help="Starting XI formation for info (e.g., 3-5-2)")
+    p_init.add_argument("--lock", type=str, default="", help="Comma-separated names to lock into the squad")
+    p_init.add_argument("--exclude", type=str, default="", help="Comma-separated names to exclude")
+    p_init.add_argument("--max-from-team", type=int, default=3, help="Max players per Premier League team (default: 3)")
+    p_init.add_argument("--report-dir", type=str, help="Directory to save initial squad files (JSON/CSV)")
+    def _cmd_init(args: argparse.Namespace) -> int:
+        _apply_log_level(args)
+        # Lazy import solver
+        from fpl_weekly_updater.team_selector.solver import select_initial_squad  # type: ignore
+        # Lazy import client to avoid pulling requests for appendix/backtest
+        from fpl_weekly_updater.apis.fpl_client import FPLClient  # type: ignore
+        from fpl_weekly_updater.config.settings import load_settings  # type: ignore
+        settings = load_settings()
+        client = FPLClient(
+            base_url=settings.api.base_url,
+            timeout=settings.api.timeout,
+            rate_limit_delay=settings.api.rate_limit_delay,
+            retry_attempts=settings.api.retry_attempts,
+            session_cookie=settings.fpl_session_cookie,
+        )
+        bootstrap = client.get_bootstrap()
+        locks = [s.strip() for s in (args.lock or "").split(",") if s.strip()]
+        excludes = [s.strip() for s in (args.exclude or "").split(",") if s.strip()]
+        result = select_initial_squad(
+            bootstrap=bootstrap,
+            budget_millions=float(args.budget),
+            formation=args.formation,
+            lock_names=locks,
+            exclude_names=excludes,
+            max_from_team=int(args.max_from_team),
+        )
+        out_dir = Path(args.report_dir) if args.report_dir else Path("reports")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ts = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
+        json_path = out_dir / f"initial_squad_{ts}.json"
+        csv_path = out_dir / f"initial_squad_{ts}.csv"
+        import json as _json, csv as _csv
+        with open(json_path, "w", encoding="utf-8") as f:
+            _json.dump(result, f, indent=2)
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = _csv.DictWriter(f, fieldnames=["id","name","position","team","price","ownership"])
+            writer.writeheader()
+            for row in result.get("squad", []):
+                writer.writerow(row)
+        logging.getLogger(__name__).info("Initial squad saved: %s; %s", json_path, csv_path)
+        return 0
+    p_init.set_defaults(func=_cmd_init)
 
     # set-password
     p_pw = sub.add_parser("set-password", help="Store FPL password in the OS keyring")

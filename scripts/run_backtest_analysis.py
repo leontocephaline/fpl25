@@ -41,10 +41,161 @@ logging.basicConfig(
 logging.getLogger('models.ml_predictor').setLevel(logging.INFO)  # Increase ML predictor verbosity for debugging
 logging.getLogger('run_backtest_analysis').setLevel(logging.INFO)   # Keep script's own logs at INFO
 
-# Add src directory to Python path
-sys.path.append(str(Path(__file__).parent.parent / 'src'))
+# Note: We avoid importing heavy ML dependencies (e.g., xgboost/lightgbm) here
+# to keep packaging light. The local backtest implementation relies only on
+# pandas/numpy/sklearn/scipy which are commonly available.
 
-from models.ml_predictor import MLPredictor
+def _safe_float(s):
+    try:
+        return float(s)
+    except Exception:
+        return 0.0
+
+def _position_from_element_type(v):
+    try:
+        et = int(v)
+    except Exception:
+        return None
+    return {1: 'GK', 2: 'DEF', 3: 'MID', 4: 'FWD'}.get(et)
+
+def _load_predictions(predictions_dir: Path, gameweek_range: tuple[int, int]) -> pd.DataFrame:
+    """Load predictions CSVs for the specified gameweek range and standardize columns."""
+    files = sorted(predictions_dir.glob('predictions_gw*.csv'))
+    if not files:
+        return pd.DataFrame()
+    gw_start, gw_end = gameweek_range
+    frames: list[pd.DataFrame] = []
+    for f in files:
+        # Extract GW from filename: predictions_gw<NN>_timestamp.csv
+        gw = None
+        stem = f.stem
+        try:
+            parts = stem.split('_')
+            gw = int(parts[1].replace('gw', '').lstrip('0') or '0')
+        except Exception:
+            gw = None
+        if gw is None or gw < gw_start or gw > gw_end:
+            continue
+        try:
+            df = pd.read_csv(f)
+            df['__source_file'] = str(f)
+            # Standardize identifiers
+            if 'id' not in df.columns and 'player_id' in df.columns:
+                df['id'] = df['player_id']
+            if 'player_id' not in df.columns and 'id' in df.columns:
+                df['player_id'] = df['id']
+            # Standardize gameweek column
+            if 'gameweek' not in df.columns:
+                df['gameweek'] = gw
+            # Position fallback from element_type if needed
+            if 'position' not in df.columns and 'element_type' in df.columns:
+                df['position'] = df['element_type'].apply(_position_from_element_type)
+            # Require minimal columns
+            cols_needed = {'player_id', 'gameweek', 'predicted_points'}
+            if not cols_needed.issubset(set(df.columns)):
+                # Try to derive predicted_points if available as another column
+                cand_cols = [c for c in df.columns if 'pred' in c.lower() and 'point' in c.lower()]
+                if cand_cols:
+                    df['predicted_points'] = df[cand_cols[0]]
+            if cols_needed.issubset(set(df.columns)):
+                frames.append(df[list(set(df.columns))])
+        except Exception as e:
+            logging.getLogger('run_backtest_analysis').warning(f"Failed to load predictions from {f}: {e}")
+    if not frames:
+        return pd.DataFrame()
+    pred = pd.concat(frames, ignore_index=True)
+    return pred
+
+def _compute_metrics(df: pd.DataFrame) -> dict:
+    y_true = df['actual_points'].astype(float).to_numpy()
+    y_pred = df['predicted_points'].astype(float).to_numpy()
+    n = len(y_true)
+    if n == 0:
+        return {'rmse': float('nan'), 'mae': float('nan'), 'r2': float('nan'), 'mean_bias': float('nan'), 'n_predictions': 0}
+    diff = y_pred - y_true
+    rmse = float(np.sqrt(np.mean(diff ** 2)))
+    mae = float(np.mean(np.abs(diff)))
+    # R^2: 1 - SS_res/SS_tot
+    y_mean = float(np.mean(y_true))
+    ss_res = float(np.sum((y_true - y_pred) ** 2))
+    ss_tot = float(np.sum((y_true - y_mean) ** 2))
+    r2 = float('nan') if ss_tot == 0.0 else float(1.0 - ss_res / ss_tot)
+    mean_bias = float(np.mean(diff))
+    return {'rmse': rmse, 'mae': mae, 'r2': r2, 'mean_bias': mean_bias, 'n_predictions': int(n)}
+
+def run_historical_backtest_local(actual_results: pd.DataFrame, gameweek_range: tuple[int, int], predictions_dir: str | Path) -> dict | None:
+    """Local fallback backtest when predictor lacks run_historical_backtest()."""
+    logger = logging.getLogger('run_backtest_analysis')
+    pred_dir = Path(predictions_dir)
+    preds = _load_predictions(pred_dir, gameweek_range)
+    if preds.empty:
+        logger.error("No prediction files found in %s for range %s", pred_dir, gameweek_range)
+        return None
+    # Standardize actuals
+    ar = actual_results.copy()
+    # Normalize id columns
+    if 'player_id' not in ar.columns and 'id' in ar.columns:
+        ar['player_id'] = ar['id']
+    if 'gameweek' not in ar.columns:
+        # Attempt fallback column names
+        for c in ['gw', 'round', 'event']:
+            if c in ar.columns:
+                ar['gameweek'] = ar[c]
+                break
+    if 'actual_points' not in ar.columns:
+        # Try common alternatives
+        for c in ['total_points', 'points', 'score']:
+            if c in ar.columns:
+                ar['actual_points'] = ar[c]
+                break
+    # Filter to requested range
+    gw_start, gw_end = gameweek_range
+    ar = ar[(pd.to_numeric(ar['gameweek'], errors='coerce') >= gw_start) & (pd.to_numeric(ar['gameweek'], errors='coerce') <= gw_end)]
+    # Merge on (player_id, gameweek)
+    key_cols = ['player_id', 'gameweek']
+    merged = pd.merge(preds, ar, on=key_cols, how='inner')
+    if merged.empty:
+        logger.error("No rows after merging predictions with actuals. Check IDs and gameweeks.")
+        return None
+    # Compute overall metrics
+    overall = _compute_metrics(merged)
+    # By position
+    by_position: dict[str, dict] = {}
+    if 'position' in merged.columns:
+        for pos, group in merged.groupby('position'):
+            by_position[str(pos)] = _compute_metrics(group)
+    # By gameweek
+    by_gameweek: dict[int, dict] = {}
+    for gw, g in merged.groupby('gameweek'):
+        m = _compute_metrics(g)
+        # simple xi proxy: Spearman correlation of ranks (numpy/pandas only)
+        try:
+            r_true = pd.Series(g['actual_points'].astype(float)).rank(method='average').to_numpy()
+            r_pred = pd.Series(g['predicted_points'].astype(float)).rank(method='average').to_numpy()
+            rx = r_true - np.mean(r_true)
+            ry = r_pred - np.mean(r_pred)
+            denom = float(np.sqrt(np.sum(rx * rx) * np.sum(ry * ry)))
+            corr = float(np.sum(rx * ry) / denom) if denom > 0 else float('nan')
+            m['xi_score'] = corr if corr == corr else None
+        except Exception:
+            m['xi_score'] = None
+        by_gameweek[int(gw)] = m
+    # Drift alerts: mean bias > 0.5 magnitude
+    drift_alerts: list[str] = []
+    for gw, m in sorted(by_gameweek.items()):
+        mb = m.get('mean_bias')
+        if mb is not None and abs(mb) > 0.5:
+            drift_alerts.append(f"GW{gw}: mean bias {mb:+.2f} pts")
+    # xi mean
+    xi_vals = [m.get('xi_score') for m in by_gameweek.values() if m.get('xi_score') is not None]
+    if xi_vals:
+        overall['xi_score_mean'] = float(np.mean(xi_vals))
+    return {
+        'overall': overall,
+        'by_position': by_position,
+        'by_gameweek': by_gameweek,
+        'drift_alerts': drift_alerts,
+    }
 
 
 def load_config():
@@ -450,7 +601,11 @@ def main():
         return 1
     
     logger.info("Running historical backtest...")
-    backtest_results = predictor.run_historical_backtest(actual_results, gameweek_range, predictions_dir=args.predictions_dir)
+    if hasattr(predictor, 'run_historical_backtest') and callable(getattr(predictor, 'run_historical_backtest')):
+        backtest_results = predictor.run_historical_backtest(actual_results, gameweek_range, predictions_dir=args.predictions_dir)
+    else:
+        logger.info("Predictor has no run_historical_backtest; using local backtest implementation.")
+        backtest_results = run_historical_backtest_local(actual_results, gameweek_range, args.predictions_dir)
     
     if backtest_results is None:
         logger.error("Backtest analysis failed and returned None. Exiting.")

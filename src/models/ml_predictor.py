@@ -5,7 +5,6 @@ from pathlib import Path
 import joblib
 import pandas as pd
 import numpy as np
-import xgboost as xgb
 import lightgbm as lgb
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
@@ -15,6 +14,15 @@ import json
 import traceback
 from datetime import datetime
 from typing import Optional
+
+# Make XGBoost optional to avoid build tool requirements on Windows
+try:
+    import xgboost as xgb
+    _xgboost_available = True
+except ImportError:
+    xgb = None
+    _xgboost_available = False
+
 try:
     import pulp  # Optional: used for constrained XI selection diagnostics
 except Exception:  # ModuleNotFoundError or other import errors
@@ -119,6 +127,8 @@ class MLPredictor:
         self._shap_available = shap is not None
         self._onnx_export_available = convert_sklearn is not None
         self._onnx_export_disabled_reason = None
+        # XGBoost availability flag
+        self._xgboost_available = _xgboost_available
         # SHAP control flag (default false to reduce noise and speed up backtests)
         self.enable_shap = ml_cfg.get('enable_shap', False)
         self.save_feature_importance_flag = ml_cfg.get('save_feature_importance', False)
@@ -348,7 +358,7 @@ class MLPredictor:
                     self.expected_features = []  # Reset to avoid using stale features
 
                 # Load conditionally based on availability and configured model_type
-                if self.model_type in ('ensemble', 'xgboost') and xgb_model_path.exists():
+                if self.model_type in ('ensemble', 'xgboost') and xgb_model_path.exists() and self._xgboost_available:
                     self.models[model_key]['xgb'] = joblib.load(xgb_model_path)
                     xgb_clf_path = self.model_save_path / f"{model_key}_xgb_clf.joblib"
                     if xgb_clf_path.exists():
@@ -827,7 +837,7 @@ class MLPredictor:
             lgbm_clf_path = self.model_save_path / f"{model_key}_lgbm_clf.joblib"
             joblib.dump(lgb_clf, lgbm_clf_path)
 
-        if self.model_type in ('ensemble', 'xgboost'):
+        if self.model_type in ('ensemble', 'xgboost') and self._xgboost_available:
             xgb_clf = xgb.XGBClassifier(**self.xgb_params)
             xgb_clf.fit(X_train, y_train)
             self.classifier_models[model_key]['xgb'] = xgb_clf
@@ -1019,7 +1029,7 @@ class MLPredictor:
         xgb_history, lgb_history = {}, {}
         xgb_test_metrics, lgb_test_metrics = {}, {}
 
-        if self.model_type in ('ensemble', 'xgboost'):
+        if self.model_type in ('ensemble', 'xgboost') and self._xgboost_available:
             xgb_model = xgb.XGBRegressor(**self.xgb_params)
             eval_set_xgb = [(X_train, y_train), (X_test, y_test)]
             try:
@@ -1029,7 +1039,7 @@ class MLPredictor:
             self.models[model_key]['xgb'] = xgb_model
             xgb_history = xgb_model.evals_result()
             self._log_feature_importance(xgb_model, X_train, 'XGBoost', model_key)
-            
+
             # Save feature list for XGBoost model
             xgb_feat_path = self.model_save_path / f"{model_key}_xgb_features.txt"
             with open(xgb_feat_path, "w") as f:
@@ -1046,7 +1056,7 @@ class MLPredictor:
             self.models[model_key]['lgbm'] = lgb_model
             lgb_history = lgb_model.evals_result_
             self._log_feature_importance(lgb_model, X_train, 'LightGBM', model_key)
-            
+
             # Save feature list for LightGBM model
             lgb_feat_path = self.model_save_path / f"{model_key}_lgbm_features.txt"
             with open(lgb_feat_path, "w") as f:
@@ -1058,13 +1068,13 @@ class MLPredictor:
             self._train_decision_tree_diagnostic(X_train, X_test, y_train, y_test, model_key)
 
         # Save models
-        if xgb_model:
+        if self._xgboost_available and 'xgb' in self.models.get(model_key, {}):
             model_path = self.model_save_path / f"{model_key}_xgb.joblib"
-            joblib.dump(xgb_model, model_path)
+            joblib.dump(self.models[model_key]['xgb'], model_path)
             self.logger.info(f"Saved XGBoost model to {model_path}")
-        if lgb_model:
+        if 'lgbm' in self.models.get(model_key, {}):
             model_path = self.model_save_path / f"{model_key}_lgbm.joblib"
-            joblib.dump(lgb_model, model_path)
+            joblib.dump(self.models[model_key]['lgbm'], model_path)
             self.logger.info(f"Saved LightGBM model to {model_path}")
 
         return {
@@ -1468,7 +1478,7 @@ class MLPredictor:
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         
         # XGBoost fit
-        if self.model_type in ('ensemble', 'xgboost'):
+        if self.model_type in ('ensemble', 'xgboost') and self._xgboost_available:
             xgb_model = xgb.XGBRegressor(**self.xgb_params)
             if small_data_mode:
                 xgb_model.fit(X_train, y_train)

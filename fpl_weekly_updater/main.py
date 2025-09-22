@@ -5,13 +5,41 @@ import logging
 import sys
 import os
 
-# Add the project root (which contains 'src') to the Python path
-# NOTE: The project root is the parent of this package directory.
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+# Ensure 'src' package directory is importable in all environments (dev, PyInstaller onedir/onefile)
+# We try multiple candidate roots and add the first matching 'src' to sys.path.
+from pathlib import Path as _Path
+def _ensure_src_on_path() -> None:
+    candidates = []
+    # 1) Project root when running from source tree (parent of this package)
+    try:
+        pkg_parent = _Path(__file__).resolve().parents[1]
+        candidates.append(pkg_parent)
+    except Exception:
+        pass
+    # 2) PyInstaller onefile extraction dir
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(_Path(meipass))
+    # 3) Directory of the executable (PyInstaller onedir)
+    try:
+        candidates.append(_Path(sys.executable).parent)
+    except Exception:
+        pass
+    # 4) Current working directory (when launched from project root)
+    try:
+        candidates.append(_Path.cwd())
+    except Exception:
+        pass
+    for root in candidates:
+        try:
+            src_dir = (root / "src")
+            if src_dir.exists() and str(src_dir) not in sys.path:
+                sys.path.insert(0, str(src_dir))
+                break
+        except Exception:
+            continue
+_ensure_src_on_path()
 
-import os
 import pickle
 import pandas as pd
 from datetime import datetime, timedelta
@@ -29,6 +57,7 @@ from fpl_weekly_updater.analysis.news_analyzer import analyze_players
 from fpl_weekly_updater.analysis.transfer_optimizer import recommend_transfers
 from fpl_weekly_updater.config.settings import load_settings
 from fpl_weekly_updater.reporting.pdf_generator import generate_pdf
+from fpl_weekly_updater.reporting.appendix_generator import generate_appendix_pdf
 
 # Ensure cache directory exists
 CACHE_DIR = os.path.expanduser('~/.fpl_news_cache')
@@ -56,6 +85,8 @@ def run_weekly_update(**kwargs) -> Path | None:
     # Runtime overrides
     skip_news: bool = bool(kwargs.get('skip_news', False))
     custom_report_dir = kwargs.get('report_dir')
+    generate_appendix: bool = bool(kwargs.get('appendix', False))
+    appendix_only: bool = bool(kwargs.get('appendix_only', False))
 
     extra_headers: Dict[str, str] = {}
     if settings.fpl_api_bearer:
@@ -608,14 +639,14 @@ def run_weekly_update(**kwargs) -> Path | None:
         if pid not in all_pos:
             logger.warning(f"Player ID {pid} not found in position mapping, skipping")
             continue
-            
+
         player_name = element_to_name.get(pid, f"Player {pid}")
         position = all_pos.get(pid, "MID")  # Default to MID if position not found
-        
+
         # Log detailed info for goalkeepers
         if position == "GK":
             logger.info(f"Processing goalkeeper: {player_name} (ID: {pid})")
-            
+
         player_data.append({
             'id': pid,
             'name': player_name,
@@ -623,11 +654,75 @@ def run_weekly_update(**kwargs) -> Path | None:
             'score': scores.get(pid, {}).get('total', 0),
             'team': element_to_team_name.get(pid, "Unknown")
         })
-    
-    
+
+    # Market-wide quick scores using bootstrap heuristic (initialize early)
+    market_scores: Dict[int, float] = {}
+    for pid, el in elements.items():
+        # Use bootstrap form (string) roughly mapped to form_trend; use chance_of_playing_next_round as start prob
+        form_str = el.get("form") or "0"
+        try:
+            form_val = float(form_str)
+        except Exception:
+            form_val = 0.0
+        # Map form ~0..10 to -1..1 centered ~2.5-3.0
+        form_trend = max(-1.0, min(1.0, (form_val - 3.0) / 3.0))
+        start_prob = el.get("chance_of_playing_next_round")
+        try:
+            start_prob = int(start_prob) if start_prob is not None else 100
+        except Exception:
+            start_prob = 100
+        pos_code = all_pos.get(pid, "MID")
+        team_name = teams.get(el.get("team"), {}).get("name", "")
+        pinputs = PlayerInputs(
+            player_id=pid,
+            name=f"{el.get('first_name','')} {el.get('second_name','')}".strip(),
+            position=pos_code,
+            team=team_name,
+            prob_goal=None,
+            prob_assist=None,
+            prob_clean_sheet=None,
+            prob_card=None,
+            xg_per90=None,
+            xa_per90=None,
+            xpts_per90=None,
+            minutes_per_game=None,
+            fixture_difficulty=1.0,
+            form_trend=form_trend,
+            start_probability=start_prob,
+        )
+        market_scores[pid] = score_player(pinputs)["total"]
+
+    # Fallback: If no player data from team, use all available players
+    if not player_data:
+        logger.warning("No player data from team - using all available players as fallback")
+
+        for pid, el in elements.items():
+            if pid not in all_pos:
+                continue
+
+            player_name = f"{el.get('first_name', '')} {el.get('second_name', '')}".strip()
+            if not player_name or player_name == ' ':
+                player_name = f"Player {pid}"
+
+            position = all_pos.get(pid, "MID")
+
+            # Use market scores as fallback
+            score = market_scores.get(pid, 0)
+
+            player_data.append({
+                'id': pid,
+                'name': player_name,
+                'position': position,
+                'score': score,
+                'team': teams.get(el.get('team'), {}).get('name', 'Unknown')
+            })
+
+        logger.info(f"Created fallback player_data with {len(player_data)} players")
+
     # Log the full player_data list before filtering for debugging
     logger.info(f"Full player_data before filtering: {json.dumps(player_data, indent=2)}")
 
+    # ... (rest of the code remains the same)
     # Log final team composition
     logger.info("\nFinal team composition before selection:")
     for pos in ['GK', 'DEF', 'MID', 'FWD']:
@@ -700,17 +795,6 @@ def run_weekly_update(**kwargs) -> Path | None:
     mids = [p for p in player_data if p['position'] == 'MID']
     fwds = [p for p in player_data if p['position'] == 'FWD']
 
-    # DEBUG: Log the goalkeepers found
-    logger.info(f"Goalkeepers found after separation ({len(gk)}): {json.dumps(gk, indent=2)}")
-
-    
-    
-    # Sort each position by score (descending)
-    gk.sort(key=lambda x: -x['score'])
-    defs.sort(key=lambda x: -x['score'])
-    mids.sort(key=lambda x: -x['score'])
-    fwds.sort(key=lambda x: -x['score'])
-    
     # Always include at least one GK
     if gk:
         selected = gk[:1]
@@ -824,7 +908,7 @@ def run_weekly_update(**kwargs) -> Path | None:
     # Names for all players
     all_names: Dict[int, str] = {pid: f"{el.get('first_name','')} {el.get('second_name','')}".strip() for pid, el in elements.items()}
 
-    # Market-wide quick scores using bootstrap heuristic
+    # Market-wide quick scores using bootstrap heuristic (initialize early)
     market_scores: Dict[int, float] = {}
     for pid, el in elements.items():
         # Use bootstrap form (string) roughly mapped to form_trend; use chance_of_playing_next_round as start prob
@@ -844,7 +928,7 @@ def run_weekly_update(**kwargs) -> Path | None:
         team_name = teams.get(el.get("team"), {}).get("name", "")
         pinputs = PlayerInputs(
             player_id=pid,
-            name=all_names.get(pid, f"Player {pid}"),
+            name=f"{el.get('first_name','')} {el.get('second_name','')}".strip(),
             position=pos_code,
             team=team_name,
             prob_goal=None,
@@ -1038,22 +1122,49 @@ def run_weekly_update(**kwargs) -> Path | None:
         "Bank": bank_value_formatted,
         "Chip Usage": chip_usage,
     }
-    pdf_path = generate_pdf(
-        output_dir=(Path(custom_report_dir) if custom_report_dir else Path(settings.report_output_dir)),
-        team_summary=team_summary,
-        player_scores={pid: {"total": scores[pid]["total"]} for pid in starters + subs if pid in scores},
-        transfers=transfers,
-        news_summaries=news,  # Fixed parameter name
-        starters=starters,
-        subs=subs,
-        name_to_pid=name_to_pid,
-        pid_to_name=element_to_name,
-        elements=elements,  # Pass the elements data for player status
-        my_team=my_team,   # Pass the team data for starting 11
-        bootstrap=bootstrap  # Pass the bootstrap data for team information
-    )
-    logger.info("Report generated: %s", pdf_path)
-    return pdf_path
+    output_dir_path = (Path(custom_report_dir) if custom_report_dir else Path(settings.report_output_dir))
+
+    pdf_path: Path | None = None
+    if not appendix_only:
+        pdf_path = generate_pdf(
+            output_dir=output_dir_path,
+            team_summary=team_summary,
+            player_scores={pid: {"total": scores[pid]["total"]} for pid in starters + subs if pid in scores},
+            transfers=transfers,
+            news_summaries=news,  # Fixed parameter name
+            starters=starters,
+            subs=subs,
+            name_to_pid=name_to_pid,
+            pid_to_name=element_to_name,
+            elements=elements,  # Pass the elements data for player status
+            my_team=my_team,   # Pass the team data for starting 11
+            bootstrap=bootstrap  # Pass the bootstrap data for team information
+        )
+        logger.info("Report generated: %s", pdf_path)
+
+    # Appendix generation (uses fixtures for the next GW if available)
+    appendix_path: Path | None = None
+    if generate_appendix or appendix_only:
+        gw_for_fixtures = team_context.get('next_event') or team_context.get('current_event')
+        try:
+            fixtures = fpl.get_fixtures(event=gw_for_fixtures) if gw_for_fixtures else fpl.get_fixtures()
+        except Exception as e:
+            logger.warning(f"Failed to fetch fixtures for appendix: {e}")
+            fixtures = []
+        appendix_path = generate_appendix_pdf(
+            output_dir=output_dir_path,
+            team_summary=team_summary,
+            player_scores={pid: {"total": scores[pid]["total"]} for pid in starters + subs if pid in scores} if scores else None,
+            elements=elements,
+            starters=starters,
+            subs=subs,
+            bootstrap=bootstrap,
+            fixtures=fixtures,
+        )
+        logger.info("Appendix generated: %s", appendix_path)
+
+    # Return the primary PDF if created; otherwise return appendix path
+    return pdf_path or appendix_path
 
 
 def cli() -> None:

@@ -79,23 +79,42 @@ Welcome to the Fantasy Premier League Prediction System! This powerful tool comb
 
 ### Configuration
 
-1. Copy the example configuration file:
-   ```bash
-   # Windows (PowerShell)
-   Copy-Item .\docs\env.example .\.env
-   # macOS/Linux
-   cp ./docs/env.example ./.env
+1. **For Executable Users:**
+   ```cmd
+   # Run the interactive setup script
+   setup.bat
+   # OR
+   python setup_fpl_updater.py
    ```
 
-2. Edit `.env` and add your API keys:
-   ```
-   # Required: Fantasy Premier League API (no key needed)
-   FPL_EMAIL=your.email@example.com
-   FPL_PASSWORD=your_password
-   
-   # Optional: External APIs for additional data
-   FOOTBALL_DATA_API_KEY=your_key_here
-   ```
+   This will guide you through:
+   - Creating your `.env` configuration file
+   - Setting up your FPL password in Windows keyring
+   - Configuring API keys
+
+2. **For Developers (Manual Setup):**
+   - Copy the example configuration file:
+     ```bash
+     # Windows (PowerShell)
+     Copy-Item .\docs\env.example .\.env
+     # macOS/Linux
+     cp ./docs/env.example ./.env
+     ```
+
+   - Edit `.env` and add your API keys:
+     ```
+     # Required: Fantasy Premier League account
+     FPL_EMAIL=your.email@example.com
+     FPL_TEAM_ID=your_team_id
+
+     # Optional: Perplexity API for enhanced news analysis
+     PERPLEXITY_API_KEY=your_perplexity_key
+     ```
+
+   - Set up your FPL password in Windows keyring:
+     ```python
+     python set_fpl_password.py
+     ```
 
 3. Configure model settings in `config.yaml`:
    ```yaml
@@ -103,7 +122,7 @@ Welcome to the Fantasy Premier League Prediction System! This powerful tool comb
      model_type: xgb  # or 'lgbm' for LightGBM
      enable_feature_importance: true
      quiet_feature_logs: false
-   
+
    optimization:
      budget: 100.0
      strategy:
@@ -134,16 +153,18 @@ This will:
 
 ### Weekly Updates
 
-1. **Update player data** (run after each gameweek):
-   ```bash
-   python -m fpl_weekly_updater.main
+1. **For Executable Users:**
+   ```cmd
+   # Double-click run_fpl_updater.bat
+   # OR run from command line:
+   .\run_fpl_updater.bat
    ```
 
-2. **Generate new predictions** (before each deadline):
+2. **For Developers:**
    ```bash
    python -m fpl_weekly_updater weekly --quiet
    ```
-   
+
    This will output the optimal team selection to the console and save detailed reports to `reports/`.
 
 ### Running Backtests

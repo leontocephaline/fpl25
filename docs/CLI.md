@@ -32,7 +32,7 @@ python -m fpl_weekly_updater weekly [--gameweek N] [--report-dir PATH] [--append
 Options:
 - `--gameweek N` – For backtest-style runs, target a specific gameweek (triggers training where applicable).
 - `--report-dir PATH` – Override the default report output directory (otherwise uses `REPORT_OUTPUT_DIR` or Desktop).
-- `--appendix` – Also generate the weekly appendix variant (placeholder; hooks will be implemented in a follow-up).
+- `--appendix` – Also generate the weekly appendix variant (implemented).
 - `--no-news` – Skip Perplexity/news analysis (uses cached data only or none).
 
 Notes:
@@ -41,13 +41,13 @@ Notes:
 
 ---
 
-## Command: appendix (placeholder)
+## Command: appendix
 
-Generate only the appendix report. This is a placeholder command; the generator hooks will be added in a follow-up.
+Generate only the appendix report (fixtures, differentials, risk flags, bench order). This runs the weekly pipeline up to team selection, skips news, and renders the appendix PDF.
 
 Usage:
 ```bash
-python -m fpl_weekly_updater appendix [-q|--quiet] [--log-level LEVEL]
+python -m fpl_weekly_updater appendix [--report-dir PATH] [-q|--quiet] [--log-level LEVEL]
 ```
 
 ---
@@ -74,13 +74,13 @@ Optional:
 
 ---
 
-## Command: init-team (placeholder)
+## Command: init-team
 
-Builds an initial 15-player squad subject to constraints. Placeholder pending solver integration.
+Builds an initial 15-player squad subject to constraints using FPL bootstrap data. Prioritizes good value (EP per price) and obeys FPL status (`a` only), budget, and per-team limits. Outputs JSON and CSV.
 
 Usage:
 ```bash
-python -m fpl_weekly_updater init-team [--budget 100.0] [--formation 3-5-2] [--lock "Haaland,Saka"] [--exclude "Player X"] [--max-from-team 3]
+python -m fpl_weekly_updater init-team [--budget 100.0] [--formation 3-5-2] [--lock "Haaland,Saka"] [--exclude "Player X"] [--max-from-team 3] [--report-dir PATH]
 ```
 
 ---

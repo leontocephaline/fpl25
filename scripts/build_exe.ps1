@@ -35,49 +35,70 @@ $buildLog = Join-Path (Join-Path (Get-Location) 'logs') 'pyinstaller_build.log'
 # Prefer existing spec if present (previously known-good), then fall back
 if ((-not $NoSpec) -and (Test-Path .\FPLWeeklyUpdater.spec)) {
     Write-Host "Found FPLWeeklyUpdater.spec - attempting spec-based build first" -ForegroundColor Cyan
-    & $python -m PyInstaller --noconfirm --log-level DEBUG .\FPLWeeklyUpdater.spec 2>&1 | Tee-Object -FilePath $buildLog -Append
+    $specArgs = @(
+        '-m','PyInstaller',
+        '--noconfirm',
+        '--log-level','DEBUG',
+        '.\FPLWeeklyUpdater.spec'
+    )
+    & $python $specArgs 2>&1 | Tee-Object -FilePath $buildLog -Append
 } else {
-    & $python -m PyInstaller --noconfirm --onedir --name $exeName --console --log-level DEBUG `
-    --additional-hooks-dir .\hooks `
-    --add-data "config.yaml;." `
-    --add-data "scripts;scripts" `
-    --add-data "src;src" `
-    --collect-all pydantic `
-    --collect-all pydantic_core `
-    --collect-submodules pydantic `
-    --collect-submodules pydantic_settings `
-    --collect-submodules fpl `
-    --collect-submodules fpl_weekly_updater `
-    --collect-submodules aiohttp `
-    --collect-all keyring `
-    --collect-submodules xgboost `
-    --collect-binaries xgboost `
-    --collect-submodules lightgbm `
-    --collect-binaries lightgbm `
-    --exclude-module hypothesis `
-    --exclude-module hypothesis.extra `
-    --exclude-module hypothesis `
-    --exclude-module hypothesis_jsonschema `
-    --exclude-module pytest `
-    --exclude-module _pytest `
-    --exclude-module pluggy `
-    --exclude-module iniconfig `
-    --exclude-module tomli `
-    --exclude-module py `
-    --exclude-module numpy.tests `
-    --exclude-module numpy.testing `
-    --exclude-module numpy.conftest `
-    --exclude-module pandas.conftest `
-    --exclude-module pandas.util._tester `
-    --exclude-module pandas.tests `
-    --exclude-module pandas.testing `
-    --exclude-module pandas._testing `
-    --exclude-module seaborn.tests `
-    --exclude-module matplotlib.tests `
-    --exclude-module sklearn.tests `
-    --exclude-module scipy.tests `
-    --hidden-import keyring.backends.Windows `
-    $entry 2>&1 | Tee-Object -FilePath $buildLog -Append
+    $pyArgs = @(
+        '-m','PyInstaller',
+        '--noconfirm',
+        '--onedir',
+        '--name',$exeName,
+        '--console',
+        '--log-level','DEBUG',
+        '--additional-hooks-dir','.\hooks',
+        '--add-data','config.yaml;.',
+        '--add-data','scripts;scripts',
+        '--add-data','src;src',
+        # Scientific stack (fix pandas datetime C-API issues)
+        '--collect-all','pandas',
+        '--collect-submodules','pandas',
+        '--collect-all','numpy',
+        '--collect-submodules','numpy',
+        '--collect-all','matplotlib',
+        '--collect-submodules','matplotlib',
+        '--collect-submodules','seaborn',
+        '--collect-all','pydantic',
+        '--collect-all','pydantic_core',
+        '--collect-submodules','pydantic',
+        '--collect-submodules','pydantic_settings',
+        '--collect-submodules','fpl',
+        '--collect-submodules','fpl_weekly_updater',
+        '--collect-submodules','aiohttp',
+        '--collect-all','keyring',
+        '--collect-submodules','xgboost',
+        '--collect-binaries','xgboost',
+        '--collect-submodules','lightgbm',
+        '--collect-binaries','lightgbm',
+        '--exclude-module','hypothesis',
+        '--exclude-module','hypothesis.extra',
+        '--exclude-module','hypothesis_jsonschema',
+        '--exclude-module','pytest',
+        '--exclude-module','_pytest',
+        '--exclude-module','pluggy',
+        '--exclude-module','iniconfig',
+        '--exclude-module','tomli',
+        '--exclude-module','py',
+        '--exclude-module','numpy.tests',
+        '--exclude-module','numpy.testing',
+        '--exclude-module','numpy.conftest',
+        '--exclude-module','pandas.conftest',
+        '--exclude-module','pandas.util._tester',
+        '--exclude-module','pandas.tests',
+        '--exclude-module','pandas.testing',
+        '--exclude-module','pandas._testing',
+        '--exclude-module','seaborn.tests',
+        '--exclude-module','matplotlib.tests',
+        '--exclude-module','sklearn.tests',
+        '--exclude-module','scipy.tests',
+        '--hidden-import','keyring.backends.Windows',
+        $entry
+    )
+    & $python $pyArgs 2>&1 | Tee-Object -FilePath $buildLog -Append
 }
 
 if ($LASTEXITCODE -eq 0) {

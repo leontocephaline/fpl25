@@ -14,6 +14,7 @@ pulp
 boruta
 tqdm
 sqlite-utils
+pyspark
 
 # Optional acceleration/inference (used when ml.inference_backend = onnx)
 onnx

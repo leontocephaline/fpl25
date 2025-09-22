@@ -40,6 +40,19 @@ dist/
 out/
 *.spec
 
+# Also ignore variant folders Windows may create (e.g., "dist (# Name clash ...)")
+build*/
+dist*/
+out*/
+
+# Local archive bucket
+archive/
+
+# Generated models and artifacts
+models/*.joblib
+models/*.onnx
+models/*_history.json
+
 # Data/output
 reports/
 plots/

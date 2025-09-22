@@ -97,14 +97,6 @@ With AFCON taking place from December 21 to January 18, managers are given addit
 - Following Gameweek 15 deadline, managers are topped up to maximum of 5 free transfers
 - These free transfers can be carried over between gameweeks and used at any time
 
-### Club Badge Creator with Adobe Express
-
-New for the 2025/26 Fantasy season, you can create a club badge using Adobe Express and its Firefly generative AI tool:
-
-- Upon entering your FPL team, you'll be prompted to generate a custom team badge
-- Adobe Express will open and ask you to enter a prompt for the Firefly AI to use when generating images
-- You'll need to log in or create an Adobe account to view your images and continue
-
 ## Technical Implementation
 
 ### Data Pipeline
@@ -136,6 +128,24 @@ To improve model interpretability and performance, several diagnostic tools are 
 - **Feature Importance**: Saves a CSV report of the most influential features for each model after training. Enable with `save_feature_importance: true`.
 - **Per-GW/Position Diagnostics**: Generates a detailed CSV report and a heatmap plot of model performance (RMSE, MAE, R²) for each gameweek and position. Enable with `enable_extended_diagnostics: true`.
 - **Residual Analysis**: Performs residual analysis by bucketing players based on their average minutes played. Produces a summary CSV and a box plot to identify systematic biases. Enable with `enable_residual_analysis: true`.
+
+## Quick Start (Python Script)
+
+1. **Install Dependencies**
+   ```bash
+   # Install all required packages
+   python -m pip install -r requirements.txt
+   ```
+
+2. **Run Weekly Optimization**
+   ```bash
+   python -m fpl_weekly_updater weekly --quiet
+   ```
+
+3. **Run with Appendix Generation**
+   ```bash
+   python -m fpl_weekly_updater weekly --appendix --quiet
+   ```
 
 ## Usage
 
@@ -175,14 +185,12 @@ See detailed command help in `docs/CLI.md`.
 - **Build onedir EXE (with xgboost/lightgbm hooks)**
 
 ```powershell
-# From the project root (PowerShell)
-$proj = (Get-Location).Path
-.\.venv\Scripts\python.exe -m PyInstaller `
+# From the project root (PowerShell) - Use system Python
+python -m PyInstaller `
   --noconfirm --onedir --name FPLWeeklyUpdater --console `
   --additional-hooks-dir .\hooks `
-  --add-data "$proj\config.yaml;." `
-  --add-data "$proj\scripts;scripts" `
-  --add-data "$proj\src;src" `
+  --add-data "config.yaml;." `
+  --add-data "team_data.json;." `
   --collect-all xgboost `
   --collect-binaries xgboost `
   --collect-all lightgbm `
@@ -225,9 +233,10 @@ Get-ChildItem .\reports | Sort-Object LastWriteTime -Descending | Select-Object 
 
 - **Do not run** the EXE from the `build/` folder; always run from `dist/` (or your configured `out/dist/`).
 - The **hooks** directory (`hooks/hook-xgboost.py`) ensures xgboost's data (`VERSION`) and the native DLL are bundled. Keep `--additional-hooks-dir .\hooks` in your build command.
-- If you see `XGBoostLibraryNotFound` or missing `xgboost\VERSION`, rebuild using the command above. As a fallback, you can copy the entire `xgboost` package from `.venv/Lib/site-packages/xgboost` into `_internal/xgboost` under the EXE folder.
+- If you see `XGBoostLibraryNotFound` or missing `xgboost\VERSION`, rebuild using the command above. As a fallback, you can copy the entire `xgboost` package from your Python site-packages into `_internal/xgboost` under the EXE folder.
 - If pytest plugins cause build noise, the build script sets `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` during analysis.
-- If you don't have `Activate.ps1` in `.venv`, that's fine—call the venv Python directly: `.\.venv\Scripts\python.exe -m <module>`.
+- **Environment**: This setup uses the system Python installation. All dependencies should be installed via `python -m pip install -r requirements.txt`.
+- **XGBoost**: The build includes XGBoost 3.0.5 with proper DLL bundling. Warnings about `xgboost.spark` and missing `pyspark` are benign and can be ignored.
 
 ## Output
 
