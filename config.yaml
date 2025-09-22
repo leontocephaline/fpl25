@@ -25,7 +25,9 @@ ml:
   test_size: 0.2
   random_state: 42
   # Inference backend: 'cpu' (default) or 'onnx'
-  inference_backend: onnx
+  # Default to CPU for maximum compatibility (works on Windows and Wine/Linux).
+  # Power users on Windows with onnxruntime installed can switch to 'onnx'.
+  inference_backend: cpu
   # Explainability
   enable_shap: false
   # XGBoost training diagnostics

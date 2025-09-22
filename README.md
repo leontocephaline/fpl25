@@ -11,6 +11,41 @@ A sophisticated Fantasy Premier League (FPL) team optimizer that uses machine le
 - **2025/26 Rule Support**: Includes updated defensive contributions, revised assists, and new chip system
 - **AFCON Transfer Support**: Handles additional transfers during African Cup of Nations period
 
+## Install (EXE Release)
+
+End users do not need Python installed. Download the onedir ZIP and installer script from the GitHub Release, then run a one-line installer.
+
+1. Download from Releases:
+   - `FPLWeeklyUpdater-onedir.zip` (contains `FPLWeeklyUpdater.exe` and DLLs)
+   - `install.ps1`
+   - Optional: `config.yaml` and `EXECUTABLE_README.md`
+
+2. Extract the ZIP and run the installer from PowerShell:
+
+   ```powershell
+   # From the folder containing install.ps1 and the extracted ZIP contents
+   pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -InstallDir "C:\Users\<you>\Apps\FPLWeeklyUpdater"
+   ```
+
+   The installer will:
+   - Create `bin/`, `data/`, `reports/`, and `logs/` in the chosen install directory
+   - Copy the onedir build to `bin/`
+   - Prompt for FPL email, team ID, and Perplexity API key; write `.env`
+   - Store your FPL password in Windows Credential Manager (native Windows)
+   - Create `run_weekly_update.bat` and `run_appendix.bat`
+
+3. Run the app:
+
+   - Weekly report: `run_weekly_update.bat`
+   - Appendix (lite backtest): `run_appendix.bat`
+
+Wine/Linux note:
+
+- On Wine, Windows Credential Manager is not available. The installer will store `FPL_PASSWORD` in `.env` (plaintext) for compatibility. Keep the install folder secure and avoid sharing `.env`.
+- ONNX/DirectML is not available on Wine. The installer forces `ml.inference_backend: cpu` in `config.yaml` when Wine is detected.
+
+See also: `EXECUTABLE_README.md` for the end-user quick start.
+
 ## Official FPL Rules Implementation
 
 ### Squad Composition

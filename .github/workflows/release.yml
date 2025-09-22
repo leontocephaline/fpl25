@@ -1,0 +1,47 @@
+name: Build and Release EXE
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build (onedir)
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_exe.ps1 -Clean -NoSpec
+
+      - name: Prepare payload
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Compress-Archive -Path .\dist\FPLWeeklyUpdater\* -DestinationPath .\release\FPLWeeklyUpdater-onedir.zip -Force
+          Copy-Item .\scripts\install.ps1 .\release\install.ps1 -Force
+          Copy-Item .\config.yaml .\release\config.yaml -Force
+          if (Test-Path .\EXECUTABLE_README.md) { Copy-Item .\EXECUTABLE_README.md .\release\EXECUTABLE_README.md -Force }
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/FPLWeeklyUpdater-onedir.zip
+            release/install.ps1
+            release/config.yaml
+            release/EXECUTABLE_README.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
