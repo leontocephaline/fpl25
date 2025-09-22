@@ -1,49 +1,45 @@
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_all
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 import os
-import sys
 
-# Include non-Python package data (e.g., VERSION) and native binaries (xgboost.dll)
+# Include non-Python package data (e.g., VERSION) and native binaries (xgboost DLL)
 datas = collect_data_files('xgboost', include_py_files=False)
 binaries = collect_dynamic_libs('xgboost')
 
-# Also collect all XGBoost submodules and their binaries
-try:
-    # Get all XGBoost-related packages and modules
-    xgb_packages = collect_all('xgboost')
-    if 'binaries' in xgb_packages:
-        binaries.extend(xgb_packages['binaries'])
-    if 'datas' in xgb_packages:
-        datas.extend(xgb_packages['datas'])
-except Exception as e:
-    print(f"Warning: Could not collect all XGBoost packages: {e}")
-
-# Try to explicitly find XGBoost DLL files
+# Explicitly search for XGBoost DLLs without importing test submodules
 try:
     import xgboost
-    lib_path = xgboost.libpath
-    if lib_path and os.path.exists(lib_path):
-        for root, dirs, files in os.walk(lib_path):
-            for file in files:
-                if file.endswith('.dll'):
-                    full_path = os.path.join(root, file)
-                    # Add to binaries with proper destination
-                    binaries.append((full_path, 'xgboost'))
-except Exception as e:
-    print(f"Warning: Could not find XGBoost library files: {e}")
-
-# Also try to find XGBoost DLLs in common locations
-try:
-    # Check for XGBoost DLL in the package directory
-    import xgboost
+    # libpath may be a function in new versions
+    try:
+        lib_path = xgboost.libpath()
+    except TypeError:
+        lib_path = getattr(xgboost, 'libpath', None)
+    if lib_path:
+        paths = lib_path if isinstance(lib_path, (list, tuple)) else [lib_path]
+        for p in paths:
+            if p and os.path.exists(p):
+                for root, dirs, files in os.walk(p):
+                    for file in files:
+                        if file.lower().endswith('.dll'):
+                            binaries.append((os.path.join(root, file), 'xgboost'))
+    # Fallback: search package dir
     xgb_dir = os.path.dirname(xgboost.__file__)
-    if xgb_dir:
+    if xgb_dir and os.path.exists(xgb_dir):
         for root, dirs, files in os.walk(xgb_dir):
+            # Skip testing and spark subpackages to avoid importing pytest/hypothesis
+            if any(skip in root.replace('\\','/').lower() for skip in ['testing', 'spark']):
+                continue
             for file in files:
-                if file.endswith('.dll') and 'xgboost' in file.lower():
-                    full_path = os.path.join(root, file)
-                    binaries.append((full_path, '.'))
-                    print(f"Found XGBoost DLL: {full_path}")
+                if file.lower().endswith('.dll') and 'xgboost' in file.lower():
+                    binaries.append((os.path.join(root, file), '.'))
 except Exception as e:
-    print(f"Warning: Could not search for XGBoost DLLs in package directory: {e}")
+    print(f"Warning: XGBoost hook DLL scan issue: {e}")
+
+# Tell PyInstaller to exclude testing/spark submodules (avoid hypothesis/pytest import)
+excludedimports = [
+    'xgboost.testing',
+    'xgboost.spark',
+    'pytest',
+    'hypothesis',
+]
 
 print(f"XGBoost hook collected {len(datas)} data files and {len(binaries)} binaries")

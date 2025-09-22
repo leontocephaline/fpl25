@@ -15,6 +15,7 @@ boruta
 tqdm
 sqlite-utils
 pyspark
+hypothesis
 
 # Optional acceleration/inference (used when ml.inference_backend = onnx)
 onnx

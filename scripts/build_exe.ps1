@@ -32,17 +32,7 @@ New-Item -ItemType Directory -Path (Join-Path (Get-Location) 'logs') -Force | Ou
 $buildLog = Join-Path (Join-Path (Get-Location) 'logs') 'pyinstaller_build.log'
 "Starting PyInstaller build at $(Get-Date)" | Out-File -FilePath $buildLog -Encoding utf8
 
-# Prefer existing spec if present (previously known-good), then fall back
-if ((-not $NoSpec) -and (Test-Path .\FPLWeeklyUpdater.spec)) {
-    Write-Host "Found FPLWeeklyUpdater.spec - attempting spec-based build first" -ForegroundColor Cyan
-    $specArgs = @(
-        '-m','PyInstaller',
-        '--noconfirm',
-        '--log-level','DEBUG',
-        '.\FPLWeeklyUpdater.spec'
-    )
-    & $python $specArgs 2>&1 | Tee-Object -FilePath $buildLog -Append
-} else {
+# Always use CLI-based build to control hidden imports and excludes
     $pyArgs = @(
         '-m','PyInstaller',
         '--noconfirm',
@@ -99,7 +89,6 @@ if ((-not $NoSpec) -and (Test-Path .\FPLWeeklyUpdater.spec)) {
         $entry
     )
     & $python $pyArgs 2>&1 | Tee-Object -FilePath $buildLog -Append
-}
 
 if ($LASTEXITCODE -eq 0) {
     $out = Join-Path (Join-Path (Get-Location) 'dist') ("{0}.exe" -f $exeName)
