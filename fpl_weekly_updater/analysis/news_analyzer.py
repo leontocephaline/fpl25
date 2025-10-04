@@ -99,17 +99,28 @@ def analyze_players(
                     if not summary or summary == f"No recent updates available for {name}.":
                         summary = f"No recent updates available for {name}."
                     
+                    # Normalize start_probability: treat 0 as None (no data)
+                    start_prob = analysis.get('start_probability')
+                    if start_prob is not None and start_prob == 0:
+                        start_prob = None
+                    
+                    # Normalize status field to lowercase for consistency
+                    status = analysis.get('status', 'unknown')
+                    if isinstance(status, str):
+                        status = status.lower()
+                    
                     result.update({
                         'summary': summary,
-                        'start_probability': analysis.get('start_probability'),
-                        'status': analysis.get('status', 'unknown'),
+                        'start_probability': start_prob,
+                        'status': status,
                         'confidence': analysis.get('confidence', 0.0),
                         'injury_status': analysis.get('injury_status'),
                         'expected_return': analysis.get('expected_return'),
                         'last_updated': current_time
                     })
                     
-                    if analysis.get('start_probability', 0) < 50 and team_context and name in team_context.get('current_team', []):
+                    # Only generate transfer recommendation if we have valid start_probability data
+                    if start_prob is not None and start_prob < 50 and team_context and name in team_context.get('current_team', []):
                         result['transfer_recommendation'] = generate_transfer_recommendation(name, analysis, context)
                     
                     if result.get('summary') and result['summary'] != f"No recent updates available for {name}.":

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
-from typing import Dict, List
+import re
+from typing import Any, Dict, List
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
@@ -134,134 +135,42 @@ def generate_pdf(
         y -= 0.7 * cm
         c.setFont("Helvetica", 10)
         
-        # Show optimized starting 11
+        # Show optimized starting 11 (minimal info only)
         for player_id in starters:
             player = elements.get(player_id, {})
             player_name = f"{player.get('first_name', '')} {player.get('second_name', '')}"
             position = {1: 'GK', 2: 'DEF', 3: 'MID', 4: 'FWD'}.get(player.get('element_type', 0), 'UNK')
-            
-            # Get team information
+
+            # Team short name
             team_name = 'TBD'
             team_id = player.get('team')
             if team_id and isinstance(team_id, int):
-                # Get team data from bootstrap
                 team_data = next((t for t in bootstrap.get('teams', []) if t.get('id') == team_id), {})
                 team_name = team_data.get('short_name', 'TBD')
-            
-            # Get player status with more detailed information (from FPL code)
-            status = player.get('status', 'a').lower()
+
+            # Availability (FPL status code)
+            status = (player.get('status') or 'a').lower()
             status_text = {
-                'a': 'Available',
-                'u': 'Unavailable',
-                'd': 'Doubtful',
-                's': 'Suspended',
-                'i': 'Injured',
-                'n': 'Not in squad'
+                'a': 'Available', 'u': 'Unavailable', 'd': 'Doubtful', 's': 'Suspended', 'i': 'Injured', 'n': 'Not in squad'
             }.get(status, f'Unknown ({status})')
-            
-            # Get player score
+
+            # Score
             score = player_scores.get(player_id, {}).get('total', 0)
-            
-            # Add chance of playing next round if available
-            chance = player.get('chance_of_playing_next_round')
-            if chance is not None and chance < 100:
-                status_text += f" ({chance}% chance)"
-                
-            # Display player info
-            c.drawString(left_margin, y, f"{position} - {player_name} ({team_name}): {status_text} (Score: {score:.1f})")
+
+            # Start probability: prefer Perplexity news if present, else FPL chance
+            news = news_summaries.get(player_name, {}) if news_summaries else {}
+            prob = news.get('start_probability') or news.get('start_prob')
+            if prob is None:
+                chance = player.get('chance_of_playing_next_round')
+                try:
+                    prob = int(chance) if chance is not None else None
+                except Exception:
+                    prob = None
+
+            # Minimal single-line display
+            start_str = f" • Start: {int(prob)}%" if isinstance(prob, (int, float)) else ""
+            c.drawString(left_margin, y, f"{position} - {player_name} ({team_name}): {status_text} (Score: {score:.1f}){start_str}")
             y -= 0.5 * cm
-            
-            # Add news if available
-            news = news_summaries.get(player_name, {})
-            news_text = ''
-            
-            # Check if we have a proper news summary
-            if isinstance(news, dict) and 'summary' in news and news['summary']:
-                news_text = news['summary']
-                if ' | ' in news_text:
-                    # Take the most relevant part before the separator
-                    news_text = news_text.split(' | ')[0]
-                
-                # Remove any duplicate sentences
-                sentences = news_text.split('. ')
-                unique_sentences = []
-                for s in sentences:
-                    s = s.strip()
-                    if s and s not in unique_sentences:
-                        unique_sentences.append(s)
-                news_text = '. '.join(unique_sentences)
-                
-                # Add probability if available
-                prob = news.get('start_probability') or news.get('start_prob')
-                if prob is not None:
-                    try:
-                        prob = int(prob)
-                        if prob > 0:
-                            news_text = f"({prob}% chance) {news_text}"
-                    except (ValueError, TypeError):
-                        pass
-                
-                # Truncate if too long
-                if len(news_text) > 200:
-                    news_text = news_text[:197] + '...'
-            # If no proper news but we have a score, show that
-            elif 'total' in news and news['total'] is not None:
-                news_text = f"Score: {news['total']:.2f}"
-                prob = news.get('start_probability') or news.get('start_prob')
-                if prob is not None:
-                    try:
-                        prob = int(prob)
-                        news_text = f"{prob}% chance | {news_text}"
-                    except (ValueError, TypeError):
-                        pass
-            
-            if news_text:
-                # Render wrapped news text with automatic page breaks
-                draw_paragraph(f"→ {news_text}", x_offset=0.5 * cm, italic=True)
-                
-            # Render structured bullet items if available
-            if news_summaries:
-                info = news_summaries.get(player_name, {})
-                if isinstance(info, dict) and info:
-                    bullets = []
-                    status_b = info.get('status')
-                    if status_b:
-                        bullets.append(f"• Status: {status_b}")
-                    sp = info.get('start_probability') or info.get('start_prob')
-                    if sp is not None:
-                        try:
-                            sp_i = int(sp)
-                            bullets.append(f"• Start Probability: {sp_i}%")
-                        except Exception:
-                            bullets.append(f"• Start Probability: {sp}")
-                    # FPL authoritative chance if available
-                    chance = player.get('chance_of_playing_next_round')
-                    if chance is not None:
-                        try:
-                            chance_i = int(chance)
-                            bullets.append(f"• Chance (FPL): {chance_i}%")
-                        except Exception:
-                            bullets.append(f"• Chance (FPL): {chance}")
-                    inj = info.get('injury_status')
-                    if inj is not None:
-                        bullets.append(f"• Injury Details: {inj if inj else 'None'}")
-                    exp = info.get('expected_return')
-                    if exp is not None:
-                        bullets.append(f"• Expected Return: {exp if exp else 'N/A'}")
-                    conf = info.get('confidence')
-                    if conf is not None:
-                        # If numeric, format; if text, show as-is
-                        try:
-                            conf_f = float(conf)
-                            bullets.append(f"• Confidence: {conf_f:.2f}")
-                        except Exception:
-                            bullets.append(f"• Confidence: {conf}")
-                    rec = info.get('transfer_recommendation')
-                    if rec:
-                        bullets.append(f"• Transfer Recommendation: {rec}")
-                    for bl in bullets:
-                        draw_paragraph(bl, x_offset=0.5 * cm, italic=False)
-            y -= 0.1 * cm
         
         # Subs
         if subs:  # Only show subs section if there are any subs
@@ -398,124 +307,198 @@ def generate_pdf(
         c.line(left_margin, y, width - right_margin, y)
         y -= 0.8 * cm
     
+    # Move player news onto a fresh page for readability
+    page_break_reset_body_font()
+
     # Show player news and updates
     c.setFont("Helvetica-Bold", 12)
     c.drawString(left_margin, y, "Player News & Updates")
     y -= 0.7 * cm
     c.setFont("Helvetica", 10)
     
+    player_news_entries: List[Dict[str, Any]] = []
+    added_names: set[str] = set()
+
+    def collect_news_entry(pid: int | None, name: str, raw_info: Dict | None) -> None:
+        nonlocal player_news_entries
+        if not name:
+            return
+        info_dict = raw_info if isinstance(raw_info, dict) else {}
+        info_copy: Dict[str, Any] = {k: v for k, v in info_dict.items() if v is not None}
+
+        score = 0.0
+        if pid is not None and player_scores:
+            score = float((player_scores.get(pid) or {}).get('total', 0.0))
+
+        fpl_elem = elements.get(pid, {}) if elements and pid is not None else {}
+        fpl_code = (fpl_elem.get('status') or '').lower() if fpl_elem else ''
+        fpl_chance_val = fpl_elem.get('chance_of_playing_next_round') if fpl_elem else None
+        try:
+            fpl_chance = int(fpl_chance_val) if fpl_chance_val is not None else None
+        except Exception:
+            fpl_chance = None
+
+        heading_status = (info_copy.get('status') or fpl_code or 'unknown').lower()
+
+        news_text = (info_copy.get('news') or info_copy.get('summary') or '').strip()
+        if '```' in news_text or '``' in news_text:
+            news_text = re.sub(r'`+\s*json\s*{[^`]+}\s*`+', '', news_text, flags=re.DOTALL | re.IGNORECASE)
+            news_text = re.sub(r'`+\s*{[^`]+}\s*`+', '', news_text, flags=re.DOTALL)
+            news_text = news_text.strip()
+            if not news_text:
+                summary_raw = (info_copy.get('summary') or 'No recent updates available.').strip()
+                summary_raw = re.sub(r'`+\s*(?:json)?\s*{[^`]+}\s*`+', '', summary_raw, flags=re.DOTALL | re.IGNORECASE)
+                news_text = summary_raw.strip()
+
+        prob_val = info_copy.get('start_probability') or info_copy.get('start_prob')
+        if prob_val is None:
+            prob_val = fpl_chance
+        prob_int = None
+        if prob_val is not None:
+            try:
+                prob_int = int(prob_val)
+                if prob_int <= 0:
+                    prob_int = None
+            except Exception:
+                prob_int = None
+
+        if not news_text:
+            news_text = "No recent updates available from trusted sources in the past week."
+
+        if prob_int is not None and prob_int < 100:
+            news_text = f"({prob_int}% chance) {news_text}"
+        elif prob_int is None and fpl_chance is not None and fpl_chance < 100:
+            news_text = f"(FPL {fpl_chance}% chance) {news_text}"
+
+        injury = info_copy.get('injury_status')
+        if isinstance(injury, str) and injury.lower() not in ['none', 'available', 'fit', 'null'] and injury.strip():
+            news_text = f"{injury.strip().capitalize()}. {news_text}"
+
+        player_news_entries.append({
+            'name': name,
+            'pid': pid,
+            'score': score,
+            'news': news_text,
+            'status': heading_status,
+            'info': info_copy,
+            'prob_int': prob_int,
+            'fpl_chance': fpl_chance
+        })
+        added_names.add(name)
+
+    # Prioritise starters and subs
+    team_player_ids: List[int] = []
+    if starters:
+        team_player_ids.extend(starters)
+    if subs:
+        team_player_ids.extend(subs)
+
+    ordered_unique_ids = list(dict.fromkeys(team_player_ids))
+    for pid in ordered_unique_ids:
+        name = pid_to_name.get(pid, f"Player {pid}") if pid_to_name else f"Player {pid}"
+        info = (news_summaries or {}).get(name)
+        collect_news_entry(pid, name, info)
+
+    # Include any remaining news entries not already covered
     if news_summaries:
-        # Group news by player and sort by score
-        player_news = []
         for name, info in news_summaries.items():
-            if not info:
+            if name in added_names:
                 continue
-                
-            # Get player ID and score if available
             pid = name_to_pid.get(name) if name_to_pid else None
-            score = player_scores.get(pid, {}).get('total', 0) if pid and player_scores else 0
-            
-            # Get news text - prefer detailed news, fall back to summary
-            news_text = info.get('news') or info.get('summary') or "No news available"
-            
-            # Add start probability if available
-            prob = info.get('start_probability')
-            if prob is not None:
-                news_text = f"({prob}% chance) {news_text}"
-                
-            # Add injury status if available
-            injury = info.get('injury_status')
-            if injury and injury.lower() not in ['none', 'available', 'fit']:
-                news_text = f"{injury.capitalize()}. {news_text}"
-                
-            player_news.append({
-                'name': name,
-                'pid': pid,
-                'score': score,
-                'news': news_text,
-                'status': info.get('status', 'unknown')
-            })
-        
-        # Sort by score (highest first)
-        player_news.sort(key=lambda x: x['score'], reverse=True)
-        
-        # Display news for each player
-        for p in player_news:
+            collect_news_entry(pid, name, info)
+
+    if not player_news_entries:
+        c.drawString(left_margin, y, "No significant player news or updates available this week.")
+        y -= 0.5 * cm
+    else:
+        player_news_entries.sort(key=lambda x: x['score'], reverse=True)
+
+        for entry in player_news_entries:
             if y < 3 * cm:
                 page_break_reset_body_font()
                 y = height - 2 * cm
-                
-            # Player name and status
+
+            raw_status = (entry['status'] or '').lower()
             status_text = {
+                'fit': 'Available',
+                'available': 'Available',
                 'a': 'Available',
-                'u': 'Unavailable',
+                'no recent update': 'No Recent Update',
+                'unknown': 'Unknown',
+                'injured': 'Injured',
+                'i': 'Injured',
+                'doubtful': 'Doubtful',
                 'd': 'Doubtful',
+                'suspended': 'Suspended',
                 's': 'Suspended',
-                'i': 'Injured'
-            }.get((p['status'] or '').lower(), str(p['status']).capitalize())
+                'unavailable': 'Unavailable',
+                'u': 'Unavailable'
+            }.get(raw_status, entry['status'].capitalize() if entry['status'] else 'Unknown')
 
             c.setFont("Helvetica-Bold", 10)
-            c.drawString(left_margin, y, f"{p['name']} ({status_text}):")
+            c.drawString(left_margin, y, f"{entry['name']} ({status_text}):")
             y -= 0.3 * cm
 
-            # News text with robust wrapping
-            draw_paragraph(p['news'], x_offset=0.5 * cm, italic=False)
+            draw_paragraph(entry['news'], x_offset=0.5 * cm, italic=False)
 
-            # Structured bullet lines under each player's news if available
-            info = news_summaries.get(p['name'], {}) if news_summaries else {}
+            info = entry.get('info', {})
             if isinstance(info, dict) and info:
                 bullets = []
-                status_b = info.get('status')
+                status_b = info.get('status') or entry['status']
                 if status_b:
-                    bullets.append(f"• Status: {status_b}")
-                sp = info.get('start_probability') or info.get('start_prob')
-                if sp is not None:
+                    s_raw = str(status_b).lower()
+                    status_map = {
+                        'fit': 'Available','available': 'Available','a': 'Available',
+                        'no recent update': 'No Recent Update','unknown': 'Unknown',
+                        'injured': 'Injured','i': 'Injured','doubtful': 'Doubtful','d': 'Doubtful',
+                        'suspended': 'Suspended','s': 'Suspended','unavailable': 'Unavailable','u': 'Unavailable'
+                    }
+                    bullets.append(f"• Status: {status_map.get(s_raw, status_b)}")
+                prob_val = entry.get('prob_int')
+                if prob_val is not None and prob_val > 0:
+                    bullets.append(f"• Start Probability: {prob_val}%")
+                elif (info.get('start_probability') or info.get('start_prob')) is not None:
                     try:
-                        sp_i = int(sp)
-                        bullets.append(f"• Start Probability: {sp_i}%")
+                        sp_i = int(info.get('start_probability') or info.get('start_prob'))
+                        if sp_i > 0:
+                            bullets.append(f"• Start Probability: {sp_i}%")
                     except Exception:
-                        bullets.append(f"• Start Probability: {sp}")
-                # FPL authoritative chance if available (look up by player name → id → element)
-                if name_to_pid and elements:
-                    p_id = name_to_pid.get(p['name'])
-                    if p_id is not None:
-                        elem = elements.get(p_id, {})
-                        chance = elem.get('chance_of_playing_next_round')
-                        if chance is not None:
-                            try:
-                                chance_i = int(chance)
-                                bullets.append(f"• Chance (FPL): {chance_i}%")
-                            except Exception:
-                                bullets.append(f"• Chance (FPL): {chance}")
+                        bullets.append(f"• Start Probability: {info.get('start_probability') or info.get('start_prob')}")
+                chance_val = entry.get('fpl_chance')
+                if chance_val is not None and chance_val < 100:
+                    bullets.append(f"• Chance (FPL): {chance_val}%")
                 inj = info.get('injury_status')
                 if inj is not None:
-                    bullets.append(f"• Injury Details: {inj if inj else 'None'}")
+                    txt = str(inj).strip()
+                    if txt and txt.lower() not in {'none','null','available','fit'}:
+                        bullets.append(f"• Injury Details: {txt}")
                 exp = info.get('expected_return')
                 if exp is not None:
-                    bullets.append(f"• Expected Return: {exp if exp else 'N/A'}")
+                    exp_txt = str(exp).strip()
+                    if exp_txt:
+                        bullets.append(f"• Expected Return: {exp_txt}")
                 conf = info.get('confidence')
                 if conf is not None:
                     try:
                         conf_f = float(conf)
-                        bullets.append(f"• Confidence: {conf_f:.2f}")
+                        if conf_f > 0:
+                            bullets.append(f"• Confidence: {conf_f:.2f}")
                     except Exception:
-                        bullets.append(f"• Confidence: {conf}")
+                        ctxt = str(conf).strip()
+                        if ctxt:
+                            bullets.append(f"• Confidence: {ctxt}")
                 rec = info.get('transfer_recommendation')
                 if rec:
                     bullets.append(f"• Transfer Recommendation: {rec}")
                 for bl in bullets:
                     draw_paragraph(bl, x_offset=0.5 * cm, italic=False)
 
-            # Add score if available
-            if p['score'] > 0:
+            if entry['score'] > 0:
                 c.setFont("Helvetica-Oblique", 8)
-                c.drawString(left_margin + 0.5 * cm, y, f"[Projected points: {p['score']:.2f}]")
+                c.drawString(left_margin + 0.5 * cm, y, f"[Projected points: {entry['score']:.2f}]")
                 y -= 0.4 * cm
-            
-            y -= 0.2 * cm  # Space between players
-    else:
-        c.drawString(left_margin, y, "No player news available.")
-        y -= 0.5 * cm
+
+            y -= 0.2 * cm
 
     # Show transfer recommendations if any
     if transfers:

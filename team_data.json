@@ -47,14 +47,14 @@
   ],
   "picks": [
     {
-      "element": 502,
+      "element": 1,
       "element_type": 1,
       "is_captain": false,
-      "is_vice_captain": true,
+      "is_vice_captain": false,
       "multiplier": 1,
       "position": 1,
-      "purchase_price": 50,
-      "selling_price": 50
+      "purchase_price": 55,
+      "selling_price": 55
     },
     {
       "element": 256,
@@ -67,24 +67,14 @@
       "selling_price": 55
     },
     {
-      "element": 610,
+      "element": 260,
       "element_type": 2,
       "is_captain": false,
       "is_vice_captain": false,
       "multiplier": 1,
       "position": 3,
       "purchase_price": 45,
-      "selling_price": 45
-    },
-    {
-      "element": 260,
-      "element_type": 2,
-      "is_captain": false,
-      "is_vice_captain": false,
-      "multiplier": 1,
-      "position": 4,
-      "purchase_price": 45,
-      "selling_price": 45
+      "selling_price": 46
     },
     {
       "element": 106,
@@ -92,17 +82,37 @@
       "is_captain": false,
       "is_vice_captain": false,
       "multiplier": 1,
-      "position": 5,
+      "position": 4,
       "purchase_price": 50,
       "selling_price": 50
     },
     {
-      "element": 119,
-      "element_type": 3,
+      "element": 610,
+      "element_type": 2,
       "is_captain": false,
       "is_vice_captain": false,
       "multiplier": 1,
+      "position": 5,
+      "purchase_price": 45,
+      "selling_price": 43
+    },
+    {
+      "element": 381,
+      "element_type": 3,
+      "is_captain": false,
+      "is_vice_captain": true,
+      "multiplier": 1,
       "position": 6,
+      "purchase_price": 145,
+      "selling_price": 145
+    },
+    {
+      "element": 119,
+      "element_type": 3,
+      "is_captain": true,
+      "is_vice_captain": false,
+      "multiplier": 2,
+      "position": 7,
       "purchase_price": 80,
       "selling_price": 80
     },
@@ -112,9 +122,9 @@
       "is_captain": false,
       "is_vice_captain": false,
       "multiplier": 1,
-      "position": 7,
+      "position": 8,
       "purchase_price": 65,
-      "selling_price": 64
+      "selling_price": 62
     },
     {
       "element": 82,
@@ -122,9 +132,9 @@
       "is_captain": false,
       "is_vice_captain": false,
       "multiplier": 1,
-      "position": 8,
+      "position": 9,
       "purchase_price": 70,
-      "selling_price": 71
+      "selling_price": 74
     },
     {
       "element": 324,
@@ -132,29 +142,19 @@
       "is_captain": false,
       "is_vice_captain": false,
       "multiplier": 1,
-      "position": 9,
+      "position": 10,
       "purchase_price": 65,
       "selling_price": 65
     },
     {
       "element": 525,
       "element_type": 4,
-      "is_captain": true,
-      "is_vice_captain": false,
-      "multiplier": 2,
-      "position": 10,
-      "purchase_price": 75,
-      "selling_price": 75
-    },
-    {
-      "element": 654,
-      "element_type": 4,
       "is_captain": false,
       "is_vice_captain": false,
       "multiplier": 1,
       "position": 11,
-      "purchase_price": 65,
-      "selling_price": 65
+      "purchase_price": 75,
+      "selling_price": 74
     },
     {
       "element": 253,
@@ -174,17 +174,17 @@
       "multiplier": 0,
       "position": 13,
       "purchase_price": 55,
-      "selling_price": 55
+      "selling_price": 54
     },
     {
-      "element": 381,
-      "element_type": 3,
+      "element": 249,
+      "element_type": 4,
       "is_captain": false,
       "is_vice_captain": false,
       "multiplier": 0,
       "position": 14,
-      "purchase_price": 145,
-      "selling_price": 145
+      "purchase_price": 78,
+      "selling_price": 77
     },
     {
       "element": 337,
@@ -194,16 +194,16 @@
       "multiplier": 0,
       "position": 15,
       "purchase_price": 65,
-      "selling_price": 65
+      "selling_price": 63
     }
   ],
-  "picks_last_updated": "2025-08-14T18:53:59.546552Z",
+  "picks_last_updated": "2025-10-03T13:51:35.522424Z",
   "transfers": {
-    "bank": 20,
+    "bank": 1,
     "cost": 4,
-    "limit": 2,
+    "limit": 4,
     "made": 0,
     "status": "cost",
-    "value": 982
+    "value": 1002
   }
 }

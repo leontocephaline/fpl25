@@ -565,7 +565,7 @@ def run_weekly_update(**kwargs) -> Path | None:
             start_probability=start_prob,
             injury_status=player_news.get('injury_status'),
             expected_return=player_news.get('expected_return'),
-            confidence=player_news.get('confidence', 0.5)
+            confidence=player_news.get('confidence', 0.5) if isinstance(player_news.get('confidence'), (int, float)) else 0.5
         )
         
         # Score the player with enhanced inputs
@@ -734,38 +734,52 @@ def run_weekly_update(**kwargs) -> Path | None:
     # Sort players by score (descending)
     player_data.sort(key=lambda x: x['score'], reverse=True)
     
-    # Filter out players who are unlikely to play
-    filtered_players = []
+    # Apply availability-based score penalties instead of excluding players
+    penalized_players = []
     for player in player_data:
         player_name = player['name']
         pid = player['id']
         player_news = news.get(player_name, {}) or {}
         
-        # Authoritative exclusion based on FPL bootstrap status codes
         el = elements.get(pid, {})
         fpl_code = str(el.get('status', 'a')).lower()
-        # a=available, d=doubtful, i=injured, s=suspended, u=unavailable, n=not in squad
-        if fpl_code in {'d', 'i', 's', 'u', 'n'}:
-            logger.info(f"Skipping {player_name} due to FPL status code '{fpl_code}'")
-            continue
+        # Penalty multipliers: keep everyone but downweight non-available
+        # a=1.0, d=0.8, i=0.5, s/u/n=0.2
+        penalty = {
+            'a': 1.0,
+            'd': 0.8,
+            'i': 0.5,
+            's': 0.2,
+            'u': 0.2,
+            'n': 0.2,
+        }.get(fpl_code, 1.0)
 
-        # Keep news fields for display (do not drive exclusion)
+        # Keep news fields for display
         status = player_news.get('status', 'available')
-        start_prob = player_news.get('start_probability', 100) or 100
+        # Prefer news start probability if present, else bootstrap chance
+        start_prob = player_news.get('start_probability')
+        if start_prob is None:
+            start_prob = el.get('chance_of_playing_next_round', 100)
+        try:
+            start_prob = int(start_prob) if start_prob is not None else 100
+        except Exception:
+            start_prob = 100
 
-        filtered_players.append({
+        adjusted_score = float(player['score']) * penalty
+
+        penalized_players.append({
             'id': pid,
             'name': player_name,
             'position': player['position'],
-            'score': player['score'],
+            'score': adjusted_score,
             'team': player.get('team', 'Unknown'),
             'status': status,
             'start_prob': start_prob
         })
     
-    player_data = filtered_players
-    logger.info(f"After filtering, {len(player_data)} players remain")
-    logger.info(f"Player data after filtering: {json.dumps(player_data, indent=2)}")
+    player_data = penalized_players
+    logger.info(f"After availability penalties, {len(player_data)} players remain")
+    logger.info(f"Player data after penalties: {json.dumps(player_data, indent=2)}")
 
     
     
@@ -841,12 +855,15 @@ def run_weekly_update(**kwargs) -> Path | None:
         
         # Check if we can add this player without exceeding position limits
         current_pos_count = sum(1 for p in selected if p['position'] == pos)
-        if (pos == 'DEF' and current_pos_count < max_def) or \
+        if (pos == 'GK' and current_pos_count < 1) or \
+           (pos == 'DEF' and current_pos_count < max_def) or \
            (pos == 'MID' and current_pos_count < max_mid) or \
            (pos == 'FWD' and current_pos_count < max_fwd):
             selected.append(next_player)
     
-    # Add remaining players to make up to 15 total players
+    # Add remaining players to make up to 15 total players (full squad: 11 starters + 4 subs)
+    # Full squad limits: 2 GK, 5 DEF, 5 MID, 3 FWD
+    squad_limits = {'GK': 2, 'DEF': 5, 'MID': 5, 'FWD': 3}
     all_players = player_data.copy()
     all_players.sort(key=lambda x: -x['score'])
     
@@ -854,9 +871,12 @@ def run_weekly_update(**kwargs) -> Path | None:
         if len(selected) >= 15:
             break
         if player not in selected:
-            selected.append(player)
+            pos = player['position']
+            current_pos_count = sum(1 for p in selected if p['position'] == pos)
+            if current_pos_count < squad_limits.get(pos, 0):
+                selected.append(player)
     
-    # Final sort by score
+    # Final sort by score (but maintain starting 11 order)
     selected.sort(key=lambda x: -x['score'])
     
     # Ensure we have a GK in starting 11 and at least one on the bench
@@ -872,19 +892,20 @@ def run_weekly_update(**kwargs) -> Path | None:
                         selected.insert(i, best_gk)
                         break
     
-    # Final selection
-    starters = [p['id'] for p in selected[:11]]
-    subs = [p['id'] for p in selected[11:15]]
+    # Final selection - ensure we have exactly 11 starters and 4 subs
+    final_selected = selected[:15]  # Take first 15 players after sorting
+    starters = [p['id'] for p in final_selected[:11]]
+    subs = [p['id'] for p in final_selected[11:15]]
     
     # Log the team with proper positions
     logger.info("\nSelected Team:")
     logger.info("Starting 11:")
-    for i, p in enumerate(selected[:11], 1):
+    for i, p in enumerate(final_selected[:11], 1):
         logger.info(f"{i:2d}. {p['name']:20} {p['position']:4} Score: {p['score']:.2f}")
     
-    if len(selected) > 11:
+    if len(final_selected) > 11:
         logger.info("\nSubstitutes:")
-        for i, p in enumerate(selected[11:15], 1):
+        for i, p in enumerate(final_selected[11:15], 1):
             logger.info(f"{i:2d}. {p['name']:20} {p['position']:4} Score: {p['score']:.2f}")
     
     # Log the optimal team
@@ -1021,7 +1042,122 @@ def run_weekly_update(**kwargs) -> Path | None:
         names=all_names,
         availabilities=avail_map,
         max_suggestions=3,
+        protected_player_ids=[raya_id] if raya_id else None,
+        # broaden suggestions to surface up to 3 even if net <= 0
+        suggestions_per_position=2,
+        include_bench_out_candidates=True,
+        bench_availability_threshold=50,
+        require_positive_net=False,
     )
+    logger.info(f"Transfer recommendations: {len(transfers)} transfers generated")
+    for idx, t in enumerate(transfers, 1):
+        logger.info(f"  {idx}. {t.get('out_name', 'Unknown')} → {t.get('in_name', 'Unknown')}: gain={t.get('gain', 0):.2f}, hit={t.get('hit', 0)}, net={t.get('net', 0):.2f}")
+
+    # Apply the top recommended transfer to the squad (user rule: OUT must be bench; IN can start)
+    # This presents the optimized team as if the top recommendation is executed first
+    if transfers:
+        top = transfers[0]
+        out_id = top.get('out')
+        in_id = top.get('in')
+        if out_id and out_id in player_ids:
+            try:
+                player_ids.remove(out_id)
+                logger.info("Removed transferred-out player %s from squad for lineup computation", element_to_name.get(out_id, out_id))
+            except ValueError:
+                pass
+        if in_id and in_id not in player_ids:
+            player_ids.append(in_id)
+            el_in = elements.get(in_id, {})
+            in_name = element_to_name.get(in_id)
+            if not in_name:
+                in_name = f"{el_in.get('first_name', '')} {el_in.get('second_name', '')}".strip() or f"Player {in_id}"
+                element_to_name[in_id] = in_name
+            # Ensure auxiliary mappings stay in sync for the new player
+            element_to_team_name[in_id] = teams.get(el_in.get('team'), {}).get('name', 'Unknown') if el_in else 'Unknown'
+            all_pos[in_id] = get_player_position(el_in, element_types) if el_in else all_pos.get(in_id, 'MID')
+            logger.info("Added transferred-in player %s to squad for lineup computation", in_name)
+
+        # Recompute player_data for updated squad
+        updated_player_data: List[Dict[str, Any]] = []
+        for pid in player_ids:
+            pos = all_pos.get(pid)
+            if not pos:
+                continue
+            el = elements.get(pid, {})
+            name = element_to_name.get(pid, f"Player {pid}")
+            # score fallback to market_scores if not in scores
+            base_score = 0.0
+            if pid in scores:
+                base_score = float(scores[pid].get('total', 0.0))
+            else:
+                base_score = float(market_scores.get(pid, 0.0))
+            # availability penalty
+            fpl_code = str(el.get('status', 'a')).lower()
+            penalty = {'a':1.0,'d':0.8,'i':0.5,'s':0.2,'u':0.2,'n':0.2}.get(fpl_code,1.0)
+            adjusted_score = base_score * penalty
+            updated_player_data.append({
+                'id': pid,
+                'name': name,
+                'position': pos,
+                'score': adjusted_score,
+                'team': el.get('team', 'Unknown')
+            })
+
+        # Re-run selection on updated_player_data
+        gk = [p for p in updated_player_data if p['position'] == 'GK']
+        defs = [p for p in updated_player_data if p['position'] == 'DEF']
+        mids = [p for p in updated_player_data if p['position'] == 'MID']
+        fwds = [p for p in updated_player_data if p['position'] == 'FWD']
+        gk.sort(key=lambda x: -x['score'])
+        defs.sort(key=lambda x: -x['score'])
+        mids.sort(key=lambda x: -x['score'])
+        fwds.sort(key=lambda x: -x['score'])
+
+        selected = gk[:1] if gk else []
+        max_def, max_mid, max_fwd = 5, 5, 3
+        min_players = {'DEF':3,'MID':2,'FWD':1}
+        selected.extend(defs[:min_players['DEF']])
+        selected.extend(mids[:min_players['MID']])
+        selected.extend(fwds[:min_players['FWD']])
+        remaining_defs = [p for p in defs if p not in selected]
+        remaining_mids = [p for p in mids if p not in selected]
+        remaining_fwds = [p for p in fwds if p not in selected]
+        remaining_players = remaining_defs + remaining_mids + remaining_fwds
+        remaining_players.sort(key=lambda x: -x['score'])
+        while len(selected) < 11 and remaining_players:
+            next_player = remaining_players.pop(0)
+            pos = next_player['position']
+            current_pos_count = sum(1 for p in selected if p['position'] == pos)
+            if (pos == 'GK' and current_pos_count < 1) or \
+               (pos == 'DEF' and current_pos_count < max_def) or \
+               (pos == 'MID' and current_pos_count < max_mid) or \
+               (pos == 'FWD' and current_pos_count < max_fwd):
+                selected.append(next_player)
+        # fill to 15 using full-squad limits
+        squad_limits = {'GK':2,'DEF':5,'MID':5,'FWD':3}
+        all_players_sorted = sorted(updated_player_data, key=lambda x: -x['score'])
+        for p in all_players_sorted:
+            if len(selected) >= 15:
+                break
+            if p in selected:
+                continue
+            pos = p['position']
+            if sum(1 for q in selected if q['position']==pos) < squad_limits[pos]:
+                selected.append(p)
+        # ensure best GK in XI
+        selected.sort(key=lambda x: -x['score'])
+        gks_in = [p for p in selected if p['position']=='GK']
+        if gks_in:
+            best_gk = gks_in[0]
+            if best_gk not in selected[:11]:
+                for i in range(10,-1,-1):
+                    if selected[i]['position']!='GK':
+                        selected.remove(best_gk)
+                        selected.insert(i,best_gk)
+                        break
+        final_selected = selected[:15]
+        starters = [p['id'] for p in final_selected[:11]]
+        subs = [p['id'] for p in final_selected[11:15]]
 
     # Debug log for news data
     logger.info(f"News data before PDF generation: {news}")
@@ -1095,13 +1231,16 @@ def run_weekly_update(**kwargs) -> Path | None:
     elif my_team and 'summary_event_points' in my_team:
         total_points = my_team['summary_event_points']
     
-    # Get team value and bank value
-    team_value = my_team.get('last_deadline_value') or my_team.get('value', 0) if my_team else 0
-    bank_value = bank_val * 10  # Convert back to FPL units (tenths of a million)
-    
-    # Format values with proper currency and thousands separators
-    team_value_formatted = f"£{team_value/10:.1f}m" if team_value else "£0.0m"
-    bank_value_formatted = f"£{bank_val:.1f}m" if bank_val is not None else "£0.0m"
+    # Get team value and bank value, with robust fallbacks
+    raw_team_value = 0
+    if my_team:
+        raw_team_value = my_team.get('last_deadline_value') or my_team.get('value') or 0
+    if (not raw_team_value) and team_entry:
+        # entry.value is in tenths of a million
+        raw_team_value = team_entry.get('value') or 0
+    # Bank already computed in millions (bank_val)
+    team_value_formatted = f"£{(raw_team_value or 0)/10:.1f}m"
+    bank_value_formatted = f"£{(bank_val or 0.0):.1f}m"
     
     # Get active chips
     chips = []
@@ -1126,10 +1265,12 @@ def run_weekly_update(**kwargs) -> Path | None:
 
     pdf_path: Path | None = None
     if not appendix_only:
+        # Build display scores with fallback to market_scores for any missing players
+        display_scores = {pid: {"total": (scores.get(pid, {}) or {}).get("total", market_scores.get(pid, 0))} for pid in starters + subs}
         pdf_path = generate_pdf(
             output_dir=output_dir_path,
             team_summary=team_summary,
-            player_scores={pid: {"total": scores[pid]["total"]} for pid in starters + subs if pid in scores},
+            player_scores=display_scores,
             transfers=transfers,
             news_summaries=news,  # Fixed parameter name
             starters=starters,
@@ -1151,10 +1292,11 @@ def run_weekly_update(**kwargs) -> Path | None:
         except Exception as e:
             logger.warning(f"Failed to fetch fixtures for appendix: {e}")
             fixtures = []
+        appendix_display_scores = {pid: {"total": (scores.get(pid, {}) or {}).get("total", market_scores.get(pid, 0))} for pid in starters + subs} if scores else None
         appendix_path = generate_appendix_pdf(
             output_dir=output_dir_path,
             team_summary=team_summary,
-            player_scores={pid: {"total": scores[pid]["total"]} for pid in starters + subs if pid in scores} if scores else None,
+            player_scores=appendix_display_scores,
             elements=elements,
             starters=starters,
             subs=subs,

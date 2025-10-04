@@ -43,6 +43,28 @@ def safe(v: Optional[float], default: float = 0.0) -> float:
     return float(v) if v is not None else default
 
 
+def convert_confidence(confidence) -> float:
+    """Convert confidence string to float value"""
+    if isinstance(confidence, (int, float)):
+        return float(confidence)
+    elif isinstance(confidence, str):
+        confidence_lower = confidence.lower()
+        if confidence_lower in ['low', 'l']:
+            return 0.3
+        elif confidence_lower in ['medium', 'med', 'm']:
+            return 0.6
+        elif confidence_lower in ['high', 'h']:
+            return 0.9
+        else:
+            # Try to parse as float string
+            try:
+                return float(confidence)
+            except ValueError:
+                return 0.5  # Default fallback
+    else:
+        return 0.5  # Default fallback
+
+
 def score_player(p: PlayerInputs) -> Dict[str, float]:
     """
     Returns a dict with component scores and total.
@@ -60,7 +82,8 @@ def score_player(p: PlayerInputs) -> Dict[str, float]:
         injury_penalty = 0.1  # 90% penalty for suspended players
     
     # Apply confidence multiplier
-    confidence_multiplier = 0.5 + (p.confidence * 0.5)  # Maps 0..1 to 0.5..1.0
+    confidence_val = convert_confidence(p.confidence)
+    confidence_multiplier = 0.5 + (confidence_val * 0.5)  # Maps 0..1 to 0.5..1.0
     
     # Adjust start probability based on injury status and confidence
     base_start_prob = safe(p.start_probability, 100.0)
@@ -149,7 +172,7 @@ def score_player(p: PlayerInputs) -> Dict[str, float]:
         "modifiers": {
             "start_multiplier": round(start_multiplier, 2),
             "injury_penalty": round(injury_penalty, 2),
-            "confidence": round(p.confidence, 2) if p.confidence is not None else 1.0
+            "confidence": round(confidence_val, 2)
         }
     }
     

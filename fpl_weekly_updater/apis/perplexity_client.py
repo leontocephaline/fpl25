@@ -190,7 +190,19 @@ class PerplexityClient:
                 return self._create_default_response(player_name)
                 
             try:
-                # Try to parse as JSON first
+                # Try to extract JSON from markdown code blocks first
+                json_match = None
+                if '```json' in content:
+                    import re
+                    json_match = re.search(r'```json\s*({[^`]+})\s*```', content, re.DOTALL)
+                elif '```' in content:
+                    import re
+                    json_match = re.search(r'```\s*({[^`]+})\s*```', content, re.DOTALL)
+                
+                if json_match:
+                    content = json_match.group(1)
+                
+                # Try to parse as JSON
                 result = json.loads(content)
                 if not isinstance(result, dict):
                     logger.warning("Parsed JSON is not a dictionary")
@@ -296,16 +308,35 @@ class PerplexityClient:
             return self._create_default_response(player_name)
             
         result = {"summary": content, "status": "Available"}
-        
-        # Try to detect injury/suspension status from text
-        content_lower = content.lower()
-        if any(word in content_lower for word in ['injured', 'injury', 'out']):
-            result["status"] = "Injured"
-        elif 'suspended' in content_lower:
+
+        # Try to detect injury/suspension status from text, respecting negations
+        text = content.lower()
+        # Common negations that imply availability
+        negations = [
+            'no injury', 'no injuries', 'no recent injury', 'no injury concerns',
+            'no fitness issues', 'not injured', 'no doubts', 'no doubt',
+            'not doubtful', 'no suspension', 'not suspended', 'no issues', 'no concerns'
+        ]
+        if any(neg in text for neg in negations):
+            result["status"] = "Available"
+            return result
+
+        # Suspensions
+        if 'suspended' in text:
             result["status"] = "Suspended"
-        elif any(word in content_lower for word in ['doubt', 'uncertain', 'fitness']):
+            return result
+
+        # Injuries (avoid generic 'out' which creates false positives)
+        injury_triggers = ['injury', 'injured', 'ruled out', 'out injured']
+        if any(trig in text for trig in injury_triggers):
+            result["status"] = "Injured"
+            return result
+
+        # Doubtful indicators
+        doubtful_triggers = ['doubt', 'doubtful', 'uncertain', 'late fitness test', 'fitness test', 'assess']
+        if any(trig in text for trig in doubtful_triggers):
             result["status"] = "Doubtful"
-            
+
         return result
         
     def _build_analysis_prompt(self, player_name: str, context: Dict[str, Any] = None) -> str:

@@ -73,3 +73,14 @@ class NewsCache:
         if expired_count > 0:
             self._save_cache()
         return expired_count
+
+    # New helper methods used by news_analyzer
+    def has(self, player_name: str) -> bool:
+        """Return True if we have non-expired news for the player in cache."""
+        return self.get_news(player_name) is not None
+
+    def delete(self, player_name: str) -> None:
+        """Remove a player's news from cache and persist the change."""
+        if player_name in self.cache:
+            del self.cache[player_name]
+            self._save_cache()
