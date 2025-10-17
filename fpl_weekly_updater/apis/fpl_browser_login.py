@@ -99,6 +99,8 @@ def login_and_get_cookie(email: str, headless: bool = True, browser: str = "edge
     if not password:
         logger.error("No password in keyring for %s", email)
         return None
+    
+    logger.info(f"Retrieved password for {email} (length: {len(password)})")
 
     driver = None
     b = (browser or "edge").lower()
@@ -153,6 +155,7 @@ def login_and_get_cookie(email: str, headless: bool = True, browser: str = "edge
         return None
 
     driver.set_page_load_timeout(60)
+    data_extracted = False
     try:
         driver.get(LOGIN_URL)
         wait = WebDriverWait(driver, 30)
@@ -169,10 +172,11 @@ def login_and_get_cookie(email: str, headless: bool = True, browser: str = "edge
                         driver.maximize_window()
                     except Exception:
                         pass
-                # Accept cookies on fantasy site if needed
+                # Accept cookies on fantasy site if needed (short timeout)
                 try:
-                    consent_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Accept')]")))
+                    consent_btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Accept')]")))
                     consent_btn.click()
+                    logger.info("Clicked consent on fantasy homepage")
                 except Exception:
                     pass
                 # Ensure header rendered
@@ -294,10 +298,11 @@ def login_and_get_cookie(email: str, headless: bool = True, browser: str = "edge
                 time.sleep(2)
         except Exception:
             pass
-        # Handle cookie/consent banner if present
+        # Handle cookie/consent banner if present (use short timeout to avoid blocking)
         try:
             # Try common selectors/text for consent buttons
             consent_btn = None
+            consent_wait = WebDriverWait(driver, 3)  # Short 3-second timeout for consent banners
             for selector in [
                 (By.CSS_SELECTOR, "button[aria-label='Accept All']"),
                 (By.XPATH, "//button[contains(., 'Accept all') or contains(., 'Accept All')]") ,
@@ -306,9 +311,11 @@ def login_and_get_cookie(email: str, headless: bool = True, browser: str = "edge
                 (By.XPATH, "//button[contains(., 'Accept')]") ,
             ]:
                 try:
-                    consent_btn = wait.until(EC.element_to_be_clickable(selector))
+                    consent_btn = consent_wait.until(EC.element_to_be_clickable(selector))
                     if consent_btn:
                         consent_btn.click()
+                        logger.info("Clicked consent banner")
+                        time.sleep(0.5)
                         break
                 except Exception:
                     pass
@@ -332,6 +339,7 @@ def login_and_get_cookie(email: str, headless: bool = True, browser: str = "edge
             # Clear and fill email
             email_input.clear()
             email_input.send_keys(email)
+            logger.info(f"Entered email: {email}")
             
             # Find and fill password field (allow for different selectors)
             password_input = WebDriverWait(driver, 10).until(
@@ -340,6 +348,13 @@ def login_and_get_cookie(email: str, headless: bool = True, browser: str = "edge
             )
             password_input.clear()
             password_input.send_keys(password)
+            logger.info(f"Entered password (length: {len(password)})")
+            
+            # Verify form fields are filled
+            email_value = email_input.get_attribute('value')
+            password_value = password_input.get_attribute('value')
+            logger.info(f"Email field value: {email_value}")
+            logger.info(f"Password field filled: {len(password_value) > 0}")
             
             # Find and click submit button (try multiple selectors and methods)
             submit_clicked = False
@@ -377,9 +392,11 @@ def login_and_get_cookie(email: str, headless: bool = True, browser: str = "edge
             
             # Wait for login to complete or redirect (with longer timeout)
             logger.info("Waiting for login to complete...")
+            # Give form submission extra time to process
+            time.sleep(3)
             try:
                 # Wait for either my-team page or pick team page
-                WebDriverWait(driver, 20).until(
+                WebDriverWait(driver, 30).until(
                     lambda d: 'my-team' in d.current_url 
                     or 'fantasy.premierleague.com' in d.current_url
                     or 'pick-team' in d.current_url
@@ -409,6 +426,33 @@ def login_and_get_cookie(email: str, headless: bool = True, browser: str = "edge
                         driver.get(MY_TEAM_URL)
                 
                 logger.info("Successfully logged in and on my-team page")
+                
+                # Take screenshot to verify login state
+                try:
+                    driver.save_screenshot("after_login.png")
+                    logger.info("Saved post-login screenshot to after_login.png")
+                except Exception:
+                    pass
+                
+                # Verify we have authenticated cookies
+                time.sleep(2)  # Allow cookies to settle
+                cookies = driver.get_cookies()
+                
+                # Log ALL cookies with their values (truncated) for debugging
+                logger.info(f"All cookies after login:")
+                for c in cookies:
+                    name = c.get('name', '')
+                    value = c.get('value', '')
+                    value_preview = value[:20] + '...' if len(value) > 20 else value
+                    logger.info(f"  {name} = {value_preview}")
+                
+                has_auth = any(c.get('name') in ['pl_profile', 'sessionid', 'session'] for c in cookies)
+                if has_auth:
+                    logger.info("✓ Authenticated cookies detected after login")
+                else:
+                    logger.warning("✗ No authenticated cookies found - login may have failed")
+                    logger.info(f"Current cookie names: {[c.get('name') for c in cookies]}")
+                    
             except Exception as e:
                 logger.warning(f"Timed out waiting for login redirect: {e}")
                 # Take screenshot for debugging
@@ -522,47 +566,148 @@ def login_and_get_cookie(email: str, headless: bool = True, browser: str = "edge
                 logger.error(f"Failed to save error page: {save_error}")
             return None
 
-        # Fetch team data via in-page API call to ensure authenticated request
+        # Extract team data using multiple strategies
         if team_id:
+            # Strategy 1: Try to get data from window.__NEXT_DATA__ or Redux store (React apps)
             try:
-                logger.info("Fetching team data via in-page API for team_id=%s", team_id)
-                js = r"""
-                const callback = arguments[arguments.length - 1];
-                (async () => {
-                  try {
-                    const resp = await fetch(`/api/my-team/${%TEAM_ID%}/`, { credentials: 'include' });
-                    if (!resp.ok) {
-                      callback({ ok: false, status: resp.status, text: await resp.text() });
-                      return;
-                    }
-                    const data = await resp.json();
-                    callback({ ok: true, data });
-                  } catch (e) {
-                    callback({ ok: false, error: String(e) });
-                  }
-                })();
-                """.replace('%TEAM_ID%', str(team_id))
-                result = driver.execute_async_script(js)
-                if result and result.get('ok') and result.get('data'):
-                    data = result['data']
-                    try:
+                logger.info("Attempting to extract team data from page state for team_id=%s", team_id)
+                js_extract_state = r"""
+                // Try multiple common React state locations
+                if (window.__NEXT_DATA__) return { source: 'nextjs', data: window.__NEXT_DATA__ };
+                if (window.__PRELOADED_STATE__) return { source: 'redux', data: window.__PRELOADED_STATE__ };
+                if (window.__data) return { source: 'data', data: window.__data };
+                if (window.ism && window.ism.state) return { source: 'ism', data: window.ism.state };
+                
+                // Try to find React root and extract state
+                const rootEl = document.querySelector('#root, #__next, [data-reactroot]');
+                if (rootEl && rootEl._reactRootContainer) {
+                    try {
+                        const fiber = rootEl._reactRootContainer._internalRoot.current;
+                        if (fiber && fiber.memoizedState) {
+                            return { source: 'react-fiber', data: fiber.memoizedState };
+                        }
+                    } catch (e) {}
+                }
+                
+                return null;
+                """
+                state_result = driver.execute_script(js_extract_state)
+                if state_result:
+                    logger.info(f"Found page state from source: {state_result.get('source')}")
+                    # Try to extract team/picks data from the state
+                    state_data = state_result.get('data', {})
+                    if 'picks' in state_data or 'team' in state_data:
                         with open('team_data.json', 'w', encoding='utf-8') as f:
-                            json.dump(data, f, indent=2)
-                        logger.info("Saved team data to team_data.json")
-                    except Exception:
-                        logger.exception("Failed to save team_data.json")
-                    return "DATA_EXTRACTED"
-                else:
-                    logger.warning(f"In-page API fetch failed: {result}")
+                            json.dump(state_data, f, indent=2)
+                        logger.info("Extracted team data from page state")
+                        data_extracted = True
             except Exception:
-                logger.exception("Error executing in-page API fetch for team data")
+                logger.debug("Could not extract from page state", exc_info=True)
+            
+            # Strategy 2: Fetch via authenticated API call
+            if not data_extracted:
+                try:
+                    logger.info("Fetching team data via in-page API for team_id=%s", team_id)
+                    # Try multiple API endpoints
+                    js_api_fetch = r"""
+                    const callback = arguments[arguments.length - 1];
+                    const teamId = %TEAM_ID%;
+                    (async () => {
+                      try {
+                        // Try the my-team endpoint first
+                        let resp = await fetch(`https://fantasy.premierleague.com/api/my-team/${teamId}/`, { 
+                          credentials: 'include',
+                          headers: { 'Accept': 'application/json' }
+                        });
+                        
+                        if (!resp.ok) {
+                          // Fallback to entry endpoint which includes picks
+                          resp = await fetch(`https://fantasy.premierleague.com/api/entry/${teamId}/`, {
+                            credentials: 'include',
+                            headers: { 'Accept': 'application/json' }
+                          });
+                        }
+                        
+                        if (!resp.ok) {
+                          callback({ ok: false, status: resp.status, text: await resp.text() });
+                          return;
+                        }
+                        
+                        const data = await resp.json();
+                        
+                        // Also try to fetch current event picks
+                        try {
+                          const entryData = await fetch(`https://fantasy.premierleague.com/api/entry/${teamId}/`, {
+                            credentials: 'include'
+                          });
+                          if (entryData.ok) {
+                            const entry = await entryData.json();
+                            data.entry = entry;
+                            
+                            // Get current event
+                            const currentEvent = entry.current_event || 1;
+                            const picksResp = await fetch(`https://fantasy.premierleague.com/api/entry/${teamId}/event/${currentEvent}/picks/`, {
+                              credentials: 'include'
+                            });
+                            if (picksResp.ok) {
+                              const picks = await picksResp.json();
+                              data.picks = picks.picks;
+                              data.event = currentEvent;
+                            }
+                          }
+                        } catch (e) {
+                          console.log('Could not fetch picks:', e);
+                        }
+                        
+                        callback({ ok: true, data });
+                      } catch (e) {
+                        callback({ ok: false, error: String(e) });
+                      }
+                    })();
+                    """.replace('%TEAM_ID%', str(team_id))
+                    # Set longer script timeout for async operations
+                    driver.set_script_timeout(30)
+                    result = driver.execute_async_script(js_api_fetch)
+                    if result and result.get('ok') and result.get('data'):
+                        data = result['data']
+                        try:
+                            with open('team_data.json', 'w', encoding='utf-8') as f:
+                                json.dump(data, f, indent=2)
+                            logger.info("Saved team data to team_data.json via API fetch")
+                            # Add timestamp for freshness check
+                            data['picks_last_updated'] = time.strftime('%Y-%m-%dT%H:%M:%S+00:00', time.gmtime())
+                            with open('team_data.json', 'w', encoding='utf-8') as f:
+                                json.dump(data, f, indent=2)
+                            data_extracted = True
+                        except Exception:
+                            logger.exception("Failed to save team_data.json")
+                    else:
+                        logger.warning(f"In-page API fetch failed: {result}")
+                except Exception:
+                    logger.exception("Error executing in-page API fetch for team data")
 
         # Fallback: try old script-based extraction (may not be present on new SPA)
-        team_data = _extract_team_data(driver)
-        if not team_data:
-            logger.error("Failed to extract team data from page")
-            return None
-        return "DATA_EXTRACTED"
+        if not data_extracted:
+            team_data = _extract_team_data(driver)
+            if team_data:
+                data_extracted = True
+            else:
+                logger.error("Failed to extract team data from page using all strategies")
+                # Save diagnostic info
+                try:
+                    with open('extraction_debug.html', 'w', encoding='utf-8') as f:
+                        f.write(f"URL: {driver.current_url}\n\n")
+                        f.write(driver.page_source)
+                    logger.info("Saved diagnostic page to extraction_debug.html")
+                except Exception:
+                    pass
+        
+        if data_extracted:
+            logger.info("✓ Successfully extracted team data - team_data.json is ready")
+            # Return special signal to indicate data was extracted successfully
+            return "DATA_EXTRACTED"
+        else:
+            logger.warning("✗ Could not extract team data - will rely on session cookies for API access")
 
         # Navigate explicitly to My Team to ensure session
         # driver.get(MY_TEAM_URL)

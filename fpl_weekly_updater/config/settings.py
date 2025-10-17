@@ -10,6 +10,7 @@ import sys
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -150,11 +151,17 @@ def _resolve_config_path(default_path: Path) -> Path:
 
 
 def load_settings() -> UpdaterSettings:
+    # Explicitly load .env file first to ensure environment variables are available
     env_path = _resolve_env_path(DEFAULT_ENV_PATH)
-    if env_path:
-        settings = UpdaterSettings(_env_file=str(env_path))
+    if env_path and env_path.exists():
+        logger.info(f"Loading environment from: {env_path}")
+        load_dotenv(dotenv_path=env_path, override=True)
     else:
-        settings = UpdaterSettings()
+        logger.warning(f"No .env file found at {env_path}, using environment variables only")
+    
+    # Now create settings (which will read from environment variables)
+    settings = UpdaterSettings()
+    
     # Load API sub-config from YAML
     resolved_cfg_path = _resolve_config_path(settings.config_yaml_path or DEFAULT_CONFIG_PATH)
     settings.config_yaml_path = resolved_cfg_path

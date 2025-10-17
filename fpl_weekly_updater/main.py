@@ -4,6 +4,7 @@ import json
 import logging
 import sys
 import os
+import getpass
 
 # Ensure 'src' package directory is importable in all environments (dev, PyInstaller onedir/onefile)
 # We try multiple candidate roots and add the first matching 'src' to sys.path.
@@ -47,8 +48,10 @@ from pathlib import Path
 from typing import Dict, List, Union, Any
 from src.models.ml_predictor import MLPredictor
 import inspect
+import keyring
+
 from fpl_weekly_updater.apis.fpl_client import FPLClient
-from fpl_weekly_updater.apis.fpl_auth import get_password, fetch_picks
+from fpl_weekly_updater.apis.fpl_auth import get_password, fetch_picks, SERVICE_NAME
 from fpl_weekly_updater.apis.fpl_browser_login import login_and_get_cookie
 from fpl_weekly_updater.apis.perplexity_client import PerplexityClient
 from fpl_weekly_updater.apis.betting_client import BettingClient
@@ -77,8 +80,115 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
+def _env_file_path() -> Path:
+    """Locate the most appropriate .env file for persisting interactive answers."""
+
+    override = os.getenv("ENV_FILE_PATH")
+    if override:
+        path = Path(override)
+        if path.exists():
+            return path
+
+    project_root = Path(__file__).resolve().parents[1]
+    candidate = project_root / ".env"
+    return candidate
+
+
+def _update_env_setting(name: str, value: str) -> None:
+    """Persist environment overrides both in-process and, when possible, into .env."""
+
+    os.environ[name] = value
+
+    env_path = _env_file_path()
+    try:
+        if not env_path.exists():
+            return
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+        updated = False
+        for idx, line in enumerate(lines):
+            if line.strip().startswith(f"{name}="):
+                lines[idx] = f"{name}={value}"
+                updated = True
+                break
+        if not updated:
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines.append(f"{name}={value}")
+        env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Failed to persist %s to %s: %s", name, env_path, exc)
+
+
+def _prompt_for_missing_settings(settings):
+    """Interactively request any missing core configuration values."""
+
+    if not sys.stdin or not sys.stdin.isatty():
+        return settings
+
+    # Team ID
+    if settings.fpl_team_id is None:
+        while True:
+            raw = input("Enter your FPL team ID (numeric): ").strip()
+            if not raw:
+                print("Team ID is required to run the weekly updater.")
+                continue
+            if raw.isdigit():
+                settings.fpl_team_id = int(raw)
+                _update_env_setting("FPL_TEAM_ID", raw)
+                break
+            print("Please provide a numeric team ID.")
+
+    # Email
+    if not settings.fpl_email:
+        while True:
+            email = input("Enter your FPL account email: ").strip()
+            if email:
+                settings.fpl_email = email
+                _update_env_setting("FPL_EMAIL", email)
+                break
+            print("Email cannot be empty.")
+
+    # Password in keyring
+    if settings.fpl_email:
+        stored_pwd = get_password(settings.fpl_email)
+        if not stored_pwd:
+            pwd = getpass.getpass("Enter your FPL password (input hidden): ").strip()
+            if pwd:
+                try:
+                    keyring.set_password(SERVICE_NAME, settings.fpl_email, pwd)
+                    print(f"Stored password securely for {settings.fpl_email}.")
+                except Exception as exc:
+                    logger.warning("Failed to store password in keyring: %s", exc)
+
+    # Report output directory (only prompt in interactive mode)
+    if sys.stdin and sys.stdin.isatty():
+        try:
+            current_dir = settings.report_output_dir
+        except Exception:
+            current_dir = None
+
+        if current_dir is None:
+            current_text = ""
+        else:
+            current_text = str(current_dir)
+
+        prompt = f"Report output directory [{current_text}]: " if current_text else "Report output directory: "
+        override = input(prompt).strip()
+        if override:
+            new_dir = Path(override).expanduser()
+            try:
+                new_dir.mkdir(parents=True, exist_ok=True)
+                settings.report_output_dir = new_dir
+                _update_env_setting("REPORT_OUTPUT_DIR", str(new_dir))
+            except Exception as exc:
+                logger.warning("Failed to use %s as report directory: %s", new_dir, exc)
+
+    return settings
+
 def run_weekly_update(**kwargs) -> Path | None:
     settings = load_settings()
+    settings = _prompt_for_missing_settings(settings)
     
     # Initialize news dictionary to store player news
     news: Dict[str, Any] = {}
@@ -810,18 +920,19 @@ def run_weekly_update(**kwargs) -> Path | None:
     fwds = [p for p in player_data if p['position'] == 'FWD']
 
     # Always include at least one GK
-    if gk:
-        selected = gk[:1]
-    else:
-        logger.warning("No goalkeepers found in player data. Adding the highest-scoring GK from all available players as a fallback.")
-        all_available_gks = [p for p in player_data if p['position'] == 'GK']
-        if all_available_gks:
-            best_gk = max(all_available_gks, key=lambda p: p.get('score', 0))
-            selected = [best_gk]
-            logger.info(f"Added fallback goalkeeper: {best_gk['name']}")
-        else:
-            selected = []
-            logger.error("CRITICAL: No goalkeepers available in the entire dataset to select.")
+    if not gk:
+        logger.error("CRITICAL: No goalkeepers found in team data. Cannot proceed without valid team.")
+        logger.error("This indicates authentication failed. Please check your FPL credentials.")
+        raise RuntimeError(
+            "Failed to load team data. Authentication required.\n"
+            "Please ensure:\n"
+            "1. FPL_TEAM_ID is set in config.yaml or environment\n"
+            "2. FPL_EMAIL is configured\n"
+            "3. Password is stored via: python -m fpl_weekly_updater.cli set-password\n"
+            "4. Or set FPL_SESSION_COOKIE environment variable with valid session"
+        )
+    
+    selected = gk[:1]
 
 # ... (rest of the code remains the same)
     # Define team composition constraints
@@ -834,7 +945,20 @@ def run_weekly_update(**kwargs) -> Path | None:
         'FWD': 1
     }
 
-    # Add minimum required outfield players
+    # Validate we have minimum required outfield players from authenticated team
+    if len(defs) < min_players['DEF']:
+        logger.error(f"Team has only {len(defs)} defenders but need {min_players['DEF']} minimum")
+        raise RuntimeError("Invalid team data: insufficient defenders. Authentication may have failed.")
+    
+    if len(mids) < min_players['MID']:
+        logger.error(f"Team has only {len(mids)} midfielders but need {min_players['MID']} minimum")
+        raise RuntimeError("Invalid team data: insufficient midfielders. Authentication may have failed.")
+    
+    if len(fwds) < min_players['FWD']:
+        logger.error(f"Team has only {len(fwds)} forwards but need {min_players['FWD']} minimum")
+        raise RuntimeError("Invalid team data: insufficient forwards. Authentication may have failed.")
+    
+    # Add minimum required outfield players from actual team
     selected.extend(defs[:min_players['DEF']])
     selected.extend(mids[:min_players['MID']])
     selected.extend(fwds[:min_players['FWD']])
