@@ -161,28 +161,10 @@ def _prompt_for_missing_settings(settings):
                 except Exception as exc:
                     logger.warning("Failed to store password in keyring: %s", exc)
 
-    # Report output directory (only prompt in interactive mode)
-    if sys.stdin and sys.stdin.isatty():
-        try:
-            current_dir = settings.report_output_dir
-        except Exception:
-            current_dir = None
-
-        if current_dir is None:
-            current_text = ""
-        else:
-            current_text = str(current_dir)
-
-        prompt = f"Report output directory [{current_text}]: " if current_text else "Report output directory: "
-        override = input(prompt).strip()
-        if override:
-            new_dir = Path(override).expanduser()
-            try:
-                new_dir.mkdir(parents=True, exist_ok=True)
-                settings.report_output_dir = new_dir
-                _update_env_setting("REPORT_OUTPUT_DIR", str(new_dir))
-            except Exception as exc:
-                logger.warning("Failed to use %s as report directory: %s", new_dir, exc)
+    # Report output directory - use default without prompting
+    if not settings.report_output_dir:
+        # Set default to Desktop if not configured
+        settings.report_output_dir = Path.home() / "Desktop"
 
     return settings
 
@@ -268,10 +250,29 @@ def run_weekly_update(**kwargs) -> Path | None:
     logger.debug("Bootstrap data fetched successfully.")
     teams = {t["id"]: t for t in bootstrap.get("teams", [])}
 
+    # Helper to verify team integrity (needs at least 11 picks and one GK)
+    def _team_has_required_positions(team_data: dict | None) -> bool:
+        if not isinstance(team_data, dict):
+            return False
+        picks = team_data.get("picks") or []
+        if len(picks) < 11:
+            return False
+        gk_count = 0
+        for pick in picks:
+            if not isinstance(pick, dict):
+                continue
+            elem_id = pick.get("element")
+            if isinstance(elem_id, int):
+                player = elements.get(elem_id)
+                if player and player.get("element_type") == 1:
+                    gk_count += 1
+        return gk_count >= 1
+
     # 2) Fetch current squad if authenticated
     logger.debug("Fetching current squad...")
     team_id = settings.fpl_team_id
     my_team = None
+    browser_team_data: dict | None = None
     # Attempt to get team data through different methods
     team_sources = []
     
@@ -326,9 +327,14 @@ def run_weekly_update(**kwargs) -> Path | None:
             if new_cookie == "DATA_EXTRACTED" and os.path.exists("team_data.json"):
                 try:
                     with open("team_data.json", "r", encoding="utf-8") as f:
-                        my_team = json.load(f)
-                        team_sources.append("Browser-extracted JSON")
-                        logger.info("Successfully loaded team data from extracted page JSON")
+                        browser_team_data = json.load(f)
+                        if browser_team_data:
+                            team_sources.append("Browser-extracted JSON")
+                            if not my_team:
+                                my_team = browser_team_data
+                                logger.info("Successfully loaded team data from extracted page JSON")
+                            else:
+                                logger.info("Browser-extracted team data available; will validate API results against it")
                 except Exception as e:
                     logger.warning(f"Failed to load team_data.json: {str(e)}")
             elif new_cookie and new_cookie != "DATA_EXTRACTED":
@@ -349,6 +355,22 @@ def run_weekly_update(**kwargs) -> Path | None:
         except Exception as e:
             logger.warning(f"Headless browser login failed: {str(e)}")
     
+    # Prefer browser-extracted data if API response is incomplete
+    if my_team and not _team_has_required_positions(my_team):
+        logger.warning(
+            "Primary team data missing required positions (picks=%d).",
+            len(my_team.get("picks") or []) if isinstance(my_team, dict) else 0,
+        )
+        if browser_team_data and _team_has_required_positions(browser_team_data):
+            logger.info(
+                "Falling back to browser-extracted team data with %d picks.",
+                len(browser_team_data.get("picks") or []),
+            )
+            my_team = browser_team_data
+            team_sources.append("Browser-extracted fallback")
+        else:
+            logger.warning("No valid browser-extracted team data available; continuing with current data")
+
     # Fallback to default team data if all methods failed
     if not my_team or not isinstance(my_team, dict):
         logger.warning("Could not fetch authenticated team. Using default team data.")
